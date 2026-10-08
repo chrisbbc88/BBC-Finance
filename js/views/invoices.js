@@ -9,8 +9,9 @@ import { DocSheet } from '../ui/docview.js';
 import { state, byId, paymentsOf, remindersOf, inScope, currentCompany } from '../lib/store.js';
 import { REMINDER_LEVELS } from '../lib/schema.js';
 import {
-  addPayment, addRefund, deletePayment, cancelInvoice, createCreditNote, markInvoiceSent, saveInternalNotes,
+  addPayment, addRefund, deletePayment, cancelInvoice, createCreditNote, markInvoiceSent, saveInternalNotes, reopenInvoice,
 } from '../lib/actions.js';
+import { docDefinition, pdfBlob, saveBlob } from '../lib/pdf.js';
 import { buildDocModel } from '../lib/docmodel.js';
 import { sumPayments, toUSD } from '../lib/calc.js';
 import { money, date, dateTime, rate } from '../lib/format.js';
@@ -148,13 +149,25 @@ function PaymentModal({ inv, refund, onClose }) {
 
 /* ---------- Detail ---------- */
 
+/** PDF einer früheren Fassung: Sie steht vollständig im Protokolleintrag „zurück in den Entwurf“. */
+async function downloadOldVersion(entry) {
+  const model = buildDocModel(entry.prev.doc, 'invoices');
+  const blob = await pdfBlob(docDefinition(model));
+  saveBlob(blob, model.fileName.replace(/\.pdf$/, ` (Fassung bis ${date(String(entry.at).slice(0, 10))}).pdf`));
+}
+
 export function History({ entityId }) {
+  const [busy, setBusy] = useState('');
   const rows = state.audit.filter((a) => a.entityId === entityId).sort((a, b) => (a.at < b.at ? 1 : -1));
   if (!rows.length) return html`<p class="muted-text">Noch keine Einträge.</p>`;
+  const old = async (a) => { setBusy(a.id); await attempt(() => downloadOldVersion(a)); setBusy(''); };
   return html`<ol class="timeline">
     ${rows.map((a) => html`<li key=${a.id}>
       <div class="timeline-what">${a.action}</div>
       <div class="timeline-when">${dateTime(a.at)}, ${a.user}</div>
+      ${a.entity === 'invoices' && a.prev && a.prev.doc && html`<div class="timeline-extra">
+        <${Button} small icon="download" busy=${busy === a.id} onClick=${() => old(a)}>Bisherige Fassung (PDF)<//>
+      </div>`}
     </li>`)}
   </ol>`;
 }
@@ -210,6 +223,21 @@ export function InvoiceDetailView({ id }) {
     if (ok) toast('Rechnung storniert', 'good');
   }
 
+  async function reopen() {
+    if (payments.length) {
+      toast('Zu dieser Rechnung sind Zahlungen eingetragen. Entferne sie zuerst – danach lässt sie sich zurück in den Entwurf setzen.', 'bad', 7000);
+      return;
+    }
+    const ok = await ask({
+      title: `Rechnung ${inv.number} zurück in den Entwurf?`,
+      text: `Die Rechnung behält ihre Nummer. Du kannst sie ändern und danach neu erstellen – es wird keine neue Nummer vergeben. Bis dahin zählt sie nicht zum Umsatz und gilt nicht als offen. Die bisherige Fassung bleibt im Verlauf abrufbar.${inv.status === 'sent' ? ' Diese Rechnung ist als versendet markiert: Der Kunde hat die bisherige Fassung. Schick ihm nach dem Ändern die neue.' : ''}`,
+      confirmLabel: 'Zurück in den Entwurf',
+    });
+    if (!ok) return;
+    const rec = await attempt(() => reopenInvoice(id));
+    if (rec) { toast(`${inv.number} ist wieder ein Entwurf`, 'good'); navigate(`/invoices/${id}/edit`); }
+  }
+
   async function credit() {
     const reason = await ask({
       title: `Gutschrift zu ${inv.number} erstellen?`,
@@ -250,6 +278,7 @@ export function InvoiceDetailView({ id }) {
         !isCredit && inv.status === 'sent' && { label: 'Erneut versenden', icon: 'mail', onClick: () => setModal('send') },
         !isCredit && inv.status === 'sent' && { label: 'Versand zurücknehmen', icon: 'undo', onClick: () => attempt(() => markInvoiceSent(id, false)) },
         !isCredit && open > 0 && status !== 'overdue' && { label: 'Zahlungserinnerung', icon: 'clock', onClick: () => setModal('reminder') },
+        canVoid && { label: 'Zurück in den Entwurf', icon: 'edit', onClick: reopen },
         !isCredit && { label: 'Als neue Rechnung kopieren', icon: 'copy', onClick: () => navigate(`/invoices/new?copy=${id}`) },
         canVoid && { label: 'Gutschrift erstellen', icon: 'undo', danger: true, onClick: credit },
         canVoid && { label: 'Stornieren', icon: 'x', danger: true, onClick: cancel },
@@ -279,7 +308,8 @@ export function InvoiceDetailView({ id }) {
             !isCredit && ['Bezahlt', money(paid, inv.currency)],
             !isCredit && ['Offen', html`<span class=${status === 'overdue' ? 'tone-bad strong' : 'strong'}>${money(open, inv.currency)}</span>`],
             !isCredit && inv.dueDate && ['Fällig am', html`${date(inv.dueDate)}${status === 'overdue' ? html` <span class="tone-bad">(seit ${daysBetween(inv.dueDate, todayISO())} Tagen)</span>` : ''}`],
-            ['Erstellt', dateTime(inv.finalizedAt)],
+            [inv.revision ? 'Neu erstellt' : 'Erstellt', dateTime(inv.finalizedAt)],
+            inv.revision && inv.firstFinalizedAt && ['Erstmals erstellt', dateTime(inv.firstFinalizedAt)],
             inv.sentAt && ['Versendet', dateTime(inv.sentAt)],
             quote && ['Aus Angebot', html`<a href=${`#/quotes/${quote.id}`}>${quote.number}</a>`],
           ]} />

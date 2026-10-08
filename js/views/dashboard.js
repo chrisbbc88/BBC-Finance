@@ -88,7 +88,10 @@ export function DashboardView() {
   const dueSoon = view.rec.filter((r) => r.status !== 'overdue' && r.inv.dueDate && r.inv.dueDate <= addDays(today, 7));
   const dueRecurring = state.recurring.filter(inScope).filter((r) => recurringDue(r, today));
   const toReview = state.expenses.filter((e) => e.status === 'review' && (inScope(e) || !e.companyId));
-  const drafts = state.invoices.filter(inScope).filter((i) => i.status === 'draft');
+  const allDrafts = state.invoices.filter(inScope).filter((i) => i.status === 'draft');
+  // Entwürfe mit Nummer waren schon erstellt und warten darauf, neu erstellt zu werden – sie fehlen so lange im Umsatz.
+  const reopened = allDrafts.filter((i) => i.number);
+  const drafts = allDrafts.filter((i) => !i.number);
   const expiring = state.quotes.filter(inScope).filter((q) => ['open', 'sent'].includes(quoteStatus(q, today)) && q.validUntil && q.validUntil <= addDays(today, 7));
 
   // Diagramm: je Unternehmen gestapelt, wenn „Alle“ gewählt ist und es mehrere gibt
@@ -142,7 +145,7 @@ export function DashboardView() {
         <//>
       </div>
       <${Panel} title="Zu erledigen" class="dash-side">
-        ${(overdue.length + dueSoon.length + dueRecurring.length + toReview.length + drafts.length + expiring.length) === 0
+        ${(overdue.length + dueSoon.length + dueRecurring.length + toReview.length + allDrafts.length + expiring.length) === 0
           ? html`<p class="muted-text">Alles erledigt. Keine überfälligen Rechnungen, keine offenen Belege.</p>`
           : html`<ul class="todo">
             ${overdue.slice(0, 5).map((r) => html`<li key=${r.inv.id}>
@@ -162,6 +165,10 @@ export function DashboardView() {
                 <span class="todo-amount">${money(r.openCents, r.inv.currency)}</span>
               </a>
             </li>`)}
+            ${reopened.slice(0, 5).map((i) => html`<li key=${i.id}><a href=${`#/invoices/${i.id}/edit`}>
+              <span class="todo-icon tone-warn"><${Icon} name="edit" /></span>
+              <span class="todo-text"><strong>${i.number}</strong> ${customerLabel(i)}
+                <span class="cell-sub">zurück im Entwurf, noch nicht neu erstellt</span></span></a></li>`)}
             ${dueRecurring.length > 0 && html`<li><a href="#/recurring">
               <span class="todo-icon tone-warn"><${Icon} name="repeat" /></span>
               <span class="todo-text"><strong>${dueRecurring.length} wiederkehrende ${dueRecurring.length === 1 ? 'Rechnung' : 'Rechnungen'}</strong>

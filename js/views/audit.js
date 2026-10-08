@@ -21,7 +21,7 @@ const FIELD = {
   logoAssetId: 'Logo', brandColor: 'Markenfarbe', invoicePrefix: 'Präfix Rechnungen', invoicePattern: 'Muster Rechnungen',
   defaultTaxRate: 'Standard-Steuersatz', paymentTermDays: 'Zahlungsziel', accountHolder: 'Kontoinhaber', bankName: 'Bank',
   street: 'Straße', zip: 'PLZ', city: 'Ort', country: 'Land', taxId: 'Steuernummer', vatId: 'USt-IdNr.', active: 'Aktiv',
-  issueDate: 'Belegdatum', nextDate: 'Nächster Termin', invoiceDraftId: 'Rechnungsentwurf', counts: 'Umfang',
+  issueDate: 'Belegdatum', customer: 'Kunde', nextDate: 'Nächster Termin', invoiceDraftId: 'Rechnungsentwurf', counts: 'Umfang',
 };
 
 function show(key, value) {
@@ -36,7 +36,7 @@ function show(key, value) {
 
 function Changes({ entry }) {
   const keys = [...new Set([...Object.keys(entry.prev || {}), ...Object.keys(entry.next || {})])]
-    .filter((k) => !['id', 'createdAt', 'updatedAt', 'items', 'totals', 'snapshot', 'fx', 'ai', 'attachmentIds'].includes(k));
+    .filter((k) => !['id', 'createdAt', 'updatedAt', 'items', 'totals', 'snapshot', 'fx', 'ai', 'attachmentIds', 'doc'].includes(k));
   if (!keys.length) return html`<span class="muted-text">–</span>`;
   return html`<ul class="changes">
     ${keys.slice(0, 8).map((k) => html`<li key=${k}>

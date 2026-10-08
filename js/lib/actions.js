@@ -210,6 +210,23 @@ function prepareDraft(doc) {
   return rec;
 }
 
+/**
+ * Ein Entwurf trägt nur dann eine Nummer, wenn er aus einer bereits erstellten Rechnung entstanden ist
+ * („Zurück in den Entwurf“). Nummer, Unternehmen und Vorgeschichte kommen dann immer aus der Datenbank –
+ * nie aus dem, was der Editor mitschickt.
+ */
+function keepReserved(rec, inDb) {
+  const reserved = !!(inDb && inDb.status === 'draft' && inDb.number);
+  if (reserved && rec.companyId !== inDb.companyId) {
+    throw new UserError(`Die Rechnung trägt bereits die Nummer ${inDb.number}. Das Unternehmen lässt sich deshalb nicht mehr wechseln.`);
+  }
+  rec.number = reserved ? inDb.number : null;
+  for (const k of ['reopened', 'revision', 'firstFinalizedAt']) {
+    if (reserved && inDb[k] != null) rec[k] = clone(inDb[k]); else delete rec[k];
+  }
+  return reserved;
+}
+
 export async function saveInvoiceDraft(inv) {
   const before = byId('invoices', inv.id);
   if (before && before.status !== 'draft') fail('Diese Rechnung ist bereits erstellt und kann nicht mehr geändert werden.');
@@ -218,17 +235,18 @@ export async function saveInvoiceDraft(inv) {
   await write(async (w) => {
     const inDb = await w.get('invoices', rec.id);
     if (inDb && inDb.status !== 'draft') throw new UserError('Diese Rechnung wurde inzwischen erstellt und kann nicht mehr geändert werden.');
+    keepReserved(rec, inDb);
     await w.put('invoices', rec);
     if (before && before.fx && rec.fx && rec.fx.manual && Number(before.fx.usdToEur) !== Number(rec.fx.usdToEur)) {
       await w.audit({
-        action: 'Wechselkurs geändert', entity: 'invoices', entityId: rec.id, label: 'Entwurf',
+        action: 'Wechselkurs geändert', entity: 'invoices', entityId: rec.id, label: rec.number || 'Entwurf',
         prev: { usdToEur: before.fx.usdToEur, fxSource: before.fx.source }, next: { usdToEur: rec.fx.usdToEur, fxSource: rec.fx.source },
       });
     }
     await w.audit({
       action: before ? 'Rechnungsentwurf geändert' : 'Rechnungsentwurf angelegt',
       entity: 'invoices', entityId: rec.id,
-      label: `Entwurf, ${customerName(byId('customers', rec.customerId)) || 'ohne Kunde'}`,
+      label: `${rec.number ? `${rec.number} (Entwurf)` : 'Entwurf'}, ${customerName(byId('customers', rec.customerId)) || 'ohne Kunde'}`,
       prev: before ? { totalCents: before.totals && before.totals.totalCents } : null,
       next: { totalCents: rec.totals.totalCents },
     });
@@ -243,6 +261,9 @@ export async function deleteInvoiceDraft(id) {
   await write(async (w) => {
     const inDb = await w.get('invoices', id);
     if (inDb && inDb.status !== 'draft') throw new UserError('Diese Rechnung wurde inzwischen erstellt und kann nicht gelöscht werden.');
+    if (inDb && inDb.number) {
+      throw new UserError(`Dieser Entwurf trägt bereits die Rechnungsnummer ${inDb.number} und lässt sich nicht löschen – die Nummer würde sonst fehlen. Erstelle die Rechnung wieder und storniere sie, wenn sie entfallen soll.`);
+    }
     await w.del('invoices', id);
     // Stammt der Entwurf aus einer wiederkehrenden Vorlage und war er deren letzter Lauf,
     // wird der Termin zurückgestellt – sonst ginge der Abrechnungszeitraum verloren.
@@ -356,15 +377,27 @@ export async function finalizeInvoice(draft) {
   return write(async (w) => {
     const inDb = await w.get('invoices', rec.id);
     if (inDb && inDb.status !== 'draft') throw new UserError('Diese Rechnung wurde bereits in einem anderen Fenster erstellt.');
-    rec.number = await assignNumber(w, company, 'invoice', rec.issueDate);
+    // War die Rechnung schon einmal erstellt, behält sie ihre Nummer – es wird keine neue vergeben.
+    const again = keepReserved(rec, inDb);
+    const was = again ? (rec.reopened || {}) : null;
+    if (!again) rec.number = await assignNumber(w, company, 'invoice', rec.issueDate);
     rec.status = 'issued';
     rec.finalizedAt = nowISO();
+    rec.sentAt = null;
     rec.snapshot = snapshotOf(company, customer);
+    if (again) {
+      rec.revision = (Number(rec.revision) || 0) + 1;
+      delete rec.reopened;
+    }
     await w.put('invoices', rec);
     await w.audit({
-      action: 'Rechnung erstellt', entity: 'invoices', entityId: rec.id, label: rec.number,
+      action: again ? 'Rechnung geändert und neu erstellt' : 'Rechnung erstellt', entity: 'invoices', entityId: rec.id, label: rec.number,
+      prev: again ? {
+        totalCents: was.totalCents, currency: was.currency, issueDate: was.issueDate, customer: was.customer, usdToEur: was.usdToEur,
+      } : undefined,
       next: {
         number: rec.number, totalCents: rec.totals.totalCents, currency: rec.currency,
+        ...(again ? { issueDate: rec.issueDate, customer: customerName(customer) } : {}),
         usdToEur: rec.fx.usdToEur, fxSource: rec.fx.source, fxManual: rec.fx.manual,
       },
     });
@@ -372,6 +405,51 @@ export async function finalizeInvoice(draft) {
       const q = await w.get('quotes', rec.quoteId);
       if (q && q.status !== 'invoiced') await w.put('quotes', touch({ ...q, status: 'invoiced', invoiceId: rec.id }));
     }
+    return rec;
+  });
+}
+
+/**
+ * Erstellte Rechnung zurück in den Entwurf setzen. Sie behält ihre Nummer (die damit weiter vergeben
+ * ist), lässt sich ändern und wird mit derselben Nummer neu erstellt. Die bisherige Fassung bleibt
+ * vollständig im Protokoll erhalten – eine erstellte Rechnung ändert sich so nie unbemerkt.
+ * Nicht möglich, solange Zahlungen eingetragen sind, und nicht für stornierte oder gutgeschriebene Belege.
+ */
+export async function reopenInvoice(id) {
+  const inv = byId('invoices', id);
+  if (!inv) fail('Rechnung nicht gefunden.');
+  if (inv.type === 'credit_note') fail('Eine Gutschrift lässt sich nicht zurück in den Entwurf setzen.');
+  if (!['issued', 'sent'].includes(inv.status)) fail('Diese Rechnung lässt sich nicht zurück in den Entwurf setzen.');
+  return write(async (w) => {
+    const fresh = await w.get('invoices', id);
+    if (!fresh || fresh.type === 'credit_note' || !['issued', 'sent'].includes(fresh.status)) {
+      throw new UserError('Die Rechnung wurde zwischenzeitlich geändert und lässt sich nicht zurück in den Entwurf setzen.');
+    }
+    const pays = await w.allByIndex('payments', 'invoiceId', id);
+    if (pays.length) {
+      throw new UserError('Zu dieser Rechnung sind Zahlungen eingetragen. Entferne sie zuerst – danach lässt sich die Rechnung zurück in den Entwurf setzen.');
+    }
+    const snapCustomer = (fresh.snapshot && fresh.snapshot.customer) || (await w.get('customers', fresh.customerId));
+    const summary = {
+      totalCents: fresh.totals ? fresh.totals.totalCents : 0, currency: fresh.currency, issueDate: fresh.issueDate,
+      customer: customerName(snapCustomer) || '', usdToEur: fresh.fx ? fresh.fx.usdToEur : null,
+    };
+    const at = nowISO();
+    const rec = touch({
+      ...fresh,
+      status: 'draft', sentAt: null, finalizedAt: null,
+      firstFinalizedAt: fresh.firstFinalizedAt || fresh.finalizedAt || null,
+      reopened: { at, finalizedAt: fresh.finalizedAt || null, wasSent: fresh.status === 'sent', sentAt: fresh.sentAt || null, ...summary },
+    });
+    // Der Entwurf zeigt wieder die aktuellen Unternehmens- und Kundendaten; die Momentaufnahme entsteht beim Erstellen neu.
+    delete rec.snapshot;
+    await w.put('invoices', rec);
+    await w.audit({
+      action: 'Rechnung zurück in den Entwurf gesetzt', entity: 'invoices', entityId: id, label: fresh.number,
+      // `doc` ist die vollständige bisherige Fassung (mit Momentaufnahme) – daraus lässt sich ihre PDF jederzeit wieder erzeugen.
+      prev: { status: fresh.status, ...summary, doc: clone(fresh) },
+      next: { status: 'draft' },
+    });
     return rec;
   });
 }

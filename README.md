@@ -44,8 +44,9 @@ Backup-Dateien nie ins Repository legen – `.gitignore` schließt sie vorsorgli
 ## Bedienung in Kürze
 
 - **Company Switcher** oben links: bestimmt Absender, Logo, Nummernkreis, Bank, Texte und Standards neuer Belege und filtert alle Listen und Zahlen. Das Farbband am oberen Rand zeigt, in welchem Unternehmen man gerade arbeitet.
-- **Rechnung schreiben**: *Neue Rechnung* → Kunde → Leistung → *Rechnung erstellen*. Bis dahin ist alles ein Entwurf. Beim Erstellen werden Nummer, Summen, Wechselkurs sowie Unternehmens- und Kundendaten festgeschrieben; danach ist der Beleg unveränderlich.
-- **Korrigieren**: stornieren (ohne Zahlungen) oder Gutschrift erstellen, dann *Als neue Rechnung kopieren*.
+- **Rechnung schreiben**: *Neue Rechnung* → Kunde → Leistung → *Rechnung erstellen*. Bis dahin ist alles ein Entwurf. Beim Erstellen werden Nummer, Summen, Wechselkurs sowie Unternehmens- und Kundendaten festgeschrieben. Danach ändert sich der Beleg nicht mehr von selbst – auch nicht, wenn du später Kunden- oder Unternehmensdaten änderst.
+- **Korrigieren mit derselben Nummer**: in der Rechnung unter *Mehr → Zurück in den Entwurf*. Die Rechnung behält ihre Nummer, lässt sich ändern und wird neu erstellt – es wird keine neue Nummer vergeben. Solange sie im Entwurf liegt, zählt sie nicht zum Umsatz und gilt nicht als offen; das Dashboard erinnert daran. Die bisherige Fassung bleibt im Verlauf der Rechnung als PDF abrufbar. Nicht möglich, solange Zahlungen eingetragen sind, und nicht bei stornierten oder gutgeschriebenen Rechnungen. Ein solcher Entwurf lässt sich nicht löschen und nicht einem anderen Unternehmen zuordnen, damit keine Nummer verloren geht.
+- **Korrigieren mit neuer Nummer**: stornieren (ohne Zahlungen) oder Gutschrift erstellen, dann *Als neue Rechnung kopieren*. Ob eine bereits verschickte Rechnung unter derselben Nummer geändert werden darf oder storniert werden muss, hängt von den Regeln ab, die für das jeweilige Unternehmen gelten – das Tool lässt beides zu und schreibt nichts davon vor.
 - **Belege**: unter *Ausgaben* Fotos oder PDFs hineinziehen. Sie landen unter *Zu prüfen*, werden ausgelesen und erst nach deiner Bestätigung gebucht.
 - **Wiederkehrend**: Vorlage mit Intervall anlegen; fällige Vorlagen erscheinen im Dashboard und erzeugen per Klick einen Rechnungsentwurf.
 - **Zahlungserinnerungen**: überfällige Rechnungen zeigen die fällige Stufe (Tage und Texte in *Einstellungen*).
@@ -136,7 +137,7 @@ Positionen liegen im Beleg (`items`), weil ein Beleg immer als Ganzes gelesen un
 node --test tests/core.test.mjs tests/reports.test.mjs
 ```
 
-32 Tests für Geldrechnung, Nummernkreise, Status, Datumsrechnung, Auswertungen, Kursquellen, Belegerkennung, Export und Backup-Prüfung. Die Abläufe im Browser (Rechnung von der Eingabe bis zur PDF, Angebot → Rechnung, Storno, Gutschrift, Belege, Backup und Wiederherstellung, zwei Tabs gleichzeitig) wurden mit einem ferngesteuerten Chromium durchgespielt – über einen Webserver und direkt von der Festplatte geöffnet. In Safari wurde nicht getestet.
+32 Tests für Geldrechnung, Nummernkreise, Status, Datumsrechnung, Auswertungen, Kursquellen, Belegerkennung, Export und Backup-Prüfung. Die Abläufe im Browser (Rechnung von der Eingabe bis zur PDF, zurück in den Entwurf und neu erstellen, Angebot → Rechnung, Storno, Gutschrift, Belege, Backup und Wiederherstellung, zwei Tabs gleichzeitig) wurden mit einem ferngesteuerten Chromium durchgespielt – über einen Webserver und direkt von der Festplatte geöffnet. In Safari wurde nicht getestet.
 
 ## Grenzen dieser Version
 

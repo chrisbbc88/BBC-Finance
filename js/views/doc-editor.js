@@ -21,7 +21,7 @@ import {
 import { computeTotals, convertCents, fxForDoc, lineTotalCents } from '../lib/calc.js';
 import { fxFor, lastKnownRate, wantedRateDate } from '../lib/fx.js';
 import { buildDocModel } from '../lib/docmodel.js';
-import { money, date, rate, pct } from '../lib/format.js';
+import { money, date, dateTime, rate, pct } from '../lib/format.js';
 import { clone, todayISO, nowISO, addDays, isISODate } from '../lib/util.js';
 import { CustomerFormModal } from './customers.js';
 import { ServiceFormModal } from './services.js';
@@ -196,6 +196,7 @@ export function DocEditorView({ coll, id, params }) {
   const [modal, setModal] = useState(null);
   const [showPreview, setShowPreview] = useState(false);
   const fxReq = useRef(0);
+  const fxFirst = useRef(true);
 
   const setDoc = (fn) => { setDocRaw(fn); setDirty(true); };
   const set = (k) => (v) => setDoc((d) => ({ ...d, [k]: v }));
@@ -231,11 +232,20 @@ export function DocEditorView({ coll, id, params }) {
       setFxState({ loading: false, error: err.message });
     }
   }
-  useEffect(() => { if (doc && doc.status === 'draft') loadFx(false); }, [fxKey]);
+  useEffect(() => {
+    const first = fxFirst.current;
+    fxFirst.current = false;
+    if (!doc || doc.status !== 'draft') return;
+    // Eine zurückgesetzte Rechnung behält ihren festgeschriebenen Kurs, solange Datum und Währung gleich bleiben.
+    if (first && doc.number && doc.fx) return;
+    loadFx(false);
+  }, [fxKey]);
 
   useEffect(() => {
     let alive = true;
     if (!doc || !company) { setPreviewNumber(''); return undefined; }
+    // Eine zurückgesetzte Rechnung behält ihre Nummer – es gibt keine „nächste“.
+    if (doc.number) { setPreviewNumber(doc.number); return undefined; }
     peekNumber(company, K.numberKind, doc.issueDate).then((n) => { if (alive) setPreviewNumber(n); }).catch(() => { if (alive) setPreviewNumber(''); });
     return () => { alive = false; };
   }, [doc && doc.companyId, doc && doc.issueDate, state.version]);
@@ -260,6 +270,9 @@ export function DocEditorView({ coll, id, params }) {
   const secondary = fxNow ? convertCents(totals.totalCents, doc.currency, other, fxNow) : null;
   const companies = activeCompanies();
   const isSaved = !!byId(coll, doc.id);
+  // Trägt der Entwurf schon eine Nummer, war die Rechnung bereits erstellt („Zurück in den Entwurf“).
+  const reserved = coll === 'invoices' && doc.number ? doc.number : '';
+  const was = reserved ? (doc.reopened || {}) : null;
 
   const customerOptions = state.customers
     .filter((c) => c.active !== false || c.id === doc.customerId)
@@ -354,9 +367,11 @@ export function DocEditorView({ coll, id, params }) {
     if (list.length) { toast('Es fehlen noch Angaben – siehe Hinweise oben.', 'bad'); return; }
     const ok = await ask({
       title: `${K.finalize}?`,
-      text: coll === 'invoices'
-        ? `Die Rechnung erhält die Nummer ${previewNumber} und lässt sich danach nicht mehr ändern. Der Wechselkurs wird festgeschrieben.`
-        : `Das Angebot erhält die Nummer ${previewNumber} und lässt sich danach nicht mehr ändern.`,
+      text: reserved
+        ? `Die Rechnung behält die Nummer ${reserved} und ersetzt die bisherige Fassung. Der Wechselkurs wird festgeschrieben.`
+        : (coll === 'invoices'
+          ? `Die Rechnung erhält die Nummer ${previewNumber} und lässt sich danach nicht mehr ändern. Der Wechselkurs wird festgeschrieben.`
+          : `Das Angebot erhält die Nummer ${previewNumber} und lässt sich danach nicht mehr ändern.`),
       list: [
         `${customerName(customer)}`,
         `${money(totals.totalCents, doc.currency)}${secondary != null ? ` (≈ ${money(secondary, other)})` : ''}`,
@@ -369,7 +384,7 @@ export function DocEditorView({ coll, id, params }) {
     setBusy('');
     if (!rec) return;
     setDirty(false);
-    toast(`${K.one} ${rec.number} erstellt`, 'good');
+    toast(`${K.one} ${rec.number} ${reserved ? 'neu erstellt' : 'erstellt'}`, 'good');
     navigateForce(`${K.list}/${rec.id}`);
   }
 
@@ -384,13 +399,22 @@ export function DocEditorView({ coll, id, params }) {
   const period = !!doc.serviceDateEnd;
 
   return html`
-    <${PageHeader} title=${isSaved ? K.editTitle : K.newTitle} back=${{ href: `#${K.list}`, label: K.listLabel }}
-      sub=${previewNumber ? `Nächste Nummer: ${previewNumber}` : (company ? '' : 'Wähle zuerst das Unternehmen, das den Beleg ausstellt.')}>
+    <${PageHeader} title=${reserved ? `Rechnung ${reserved} bearbeiten` : (isSaved ? K.editTitle : K.newTitle)} back=${{ href: `#${K.list}`, label: K.listLabel }}
+      sub=${reserved
+        ? 'Entwurf – die Nummer bleibt erhalten'
+        : (previewNumber ? `Nächste Nummer: ${previewNumber}` : (company ? '' : 'Wähle zuerst das Unternehmen, das den Beleg ausstellt.'))}>
       <${Button} class="only-narrow" icon="eye" onClick=${() => setShowPreview(!showPreview)}>${showPreview ? 'Formular' : 'Vorschau'}<//>
-      ${isSaved && html`<${Menu} items=${[{ label: 'Entwurf löschen', icon: 'trash', danger: true, onClick: removeDraft }]} />`}
+      ${isSaved && !reserved && html`<${Menu} items=${[{ label: 'Entwurf löschen', icon: 'trash', danger: true, onClick: removeDraft }]} />`}
       <${Button} icon="check" onClick=${saveDraft} busy=${busy === 'save'} disabled=${!!busy}>Entwurf speichern<//>
       <${Button} variant="primary" icon="invoice" onClick=${finalize} busy=${busy === 'finalize'} disabled=${!!busy}>${K.finalize}<//>
     <//>
+
+    ${reserved && html`<${Notice} tone="info">
+      Diese Rechnung war bereits erstellt${was.finalizedAt ? ` (${dateTime(was.finalizedAt)})` : ''} und ist zurück im Entwurf.
+      Ändere, was nötig ist, und klicke auf „Rechnung erstellen“ – sie behält die Nummer ${reserved}.
+      Bis dahin zählt sie nicht zum Umsatz und gilt nicht als offen.
+      ${was.wasSent ? ' Sie war als versendet markiert: Schick dem Kunden danach die neue Fassung.' : ''}
+    <//>`}
 
     ${problems.length > 0 && html`<${Notice} tone="warn">
       <strong>Vor dem Erstellen fehlt noch:</strong>
@@ -402,8 +426,9 @@ export function DocEditorView({ coll, id, params }) {
         <${Panel} title="Aussteller und Kunde">
           <div class="form-grid">
             <${SelectField} class="span-3" label="Unternehmen" value=${doc.companyId} onChange=${pickCompany}
+              disabled=${!!reserved} hint=${reserved ? 'Gehört zur Rechnungsnummer und lässt sich nicht mehr wechseln.' : ''}
               placeholder=${companies.length ? 'Unternehmen wählen' : 'Noch kein Unternehmen angelegt'}
-              options=${companies.map((c) => ({ id: c.id, label: c.name }))} />
+              options=${(reserved && company && !companies.some((c) => c.id === company.id) ? [company, ...companies] : companies).map((c) => ({ id: c.id, label: c.name }))} />
             <${Field} class="span-3" label="Kunde" htmlFor="doc-customer">
               <${Combobox} id="doc-customer" options=${customerOptions} value=${doc.customerId} placeholder="Kunde suchen"
                 autoFocus=${!!doc.companyId && !doc.customerId}
