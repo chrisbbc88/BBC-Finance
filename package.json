@@ -1,0 +1,11 @@
+{
+  "name": "bbc-finance",
+  "private": true,
+  "type": "module",
+  "description": "BBC Finance – Rechnungen, Belege und Finanzübersicht für mehrere Unternehmen. Statische Web-App.",
+  "scripts": {
+    "build": "npx esbuild js/app.js --bundle --format=iife --target=es2020 --charset=utf8 --minify --legal-comments=none --outfile=js/app.bundle.js",
+    "test": "node --test tests/core.test.mjs tests/reports.test.mjs",
+    "serve": "python3 -m http.server 8080"
+  }
+}
