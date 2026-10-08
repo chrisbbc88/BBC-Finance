@@ -10,7 +10,7 @@ import {
 } from './calc.js';
 import { buildDocModel, unsupportedPdfChars } from './docmodel.js';
 import { wantedRateDate } from './fx.js';
-import { nextNumber, counterKey, numberingOf, validatePattern } from './numbering.js';
+import { nextNumber, counterKey, numberingOf, validatePattern, formatNumber } from './numbering.js';
 import {
   uid, nowISO, todayISO, addDays, addMonths, clone, diffFields, isISODate,
 } from './util.js';
@@ -221,7 +221,7 @@ function keepReserved(rec, inDb) {
     throw new UserError(`Die Rechnung trägt bereits die Nummer ${inDb.number}. Das Unternehmen lässt sich deshalb nicht mehr wechseln.`);
   }
   rec.number = reserved ? inDb.number : null;
-  for (const k of ['reopened', 'revision', 'firstFinalizedAt']) {
+  for (const k of ['reopened', 'revision', 'firstFinalizedAt', 'numberRef']) {
     if (reserved && inDb[k] != null) rec[k] = clone(inDb[k]); else delete rec[k];
   }
   return reserved;
@@ -257,31 +257,57 @@ export async function saveInvoiceDraft(inv) {
 export async function deleteInvoiceDraft(id) {
   const inv = byId('invoices', id);
   if (!inv) return;
-  if (inv.status !== 'draft') fail('Erstellte Rechnungen können nicht gelöscht, nur storniert werden.');
+  // Ein Entwurf mit Nummer war schon einmal erstellt – er wird wie eine erstellte Rechnung gelöscht (Nummer wird frei).
+  if (inv.number || inv.status !== 'draft') { await deleteInvoice(id); return; }
   await write(async (w) => {
     const inDb = await w.get('invoices', id);
-    if (inDb && inDb.status !== 'draft') throw new UserError('Diese Rechnung wurde inzwischen erstellt und kann nicht gelöscht werden.');
-    if (inDb && inDb.number) {
-      throw new UserError(`Dieser Entwurf trägt bereits die Rechnungsnummer ${inDb.number} und lässt sich nicht löschen – die Nummer würde sonst fehlen. Erstelle die Rechnung wieder und storniere sie, wenn sie entfallen soll.`);
-    }
+    if (inDb && (inDb.status !== 'draft' || inDb.number)) throw new UserError('Diese Rechnung wurde inzwischen erstellt. Bitte die Seite neu öffnen.');
     await w.del('invoices', id);
-    // Stammt der Entwurf aus einer wiederkehrenden Vorlage und war er deren letzter Lauf,
-    // wird der Termin zurückgestellt – sonst ginge der Abrechnungszeitraum verloren.
-    if (inv.recurringId) {
-      const rec = await w.get('recurring', inv.recurringId);
-      if (rec && rec.nextDate === addMonths(inv.issueDate, intervalMonths(rec), rec.anchorDay)) {
-        await w.put('recurring', touch({
-          ...rec, nextDate: inv.issueDate, generated: Math.max(0, (rec.generated || 0) - 1),
-          active: rec.endedByRun ? true : rec.active, endedByRun: false,
-        }));
-      }
-    }
-    // Stammt er aus einem Angebot, wird die Verknüpfung gelöst.
-    if (inv.quoteId) {
-      const q = await w.get('quotes', inv.quoteId);
-      if (q && q.invoiceId === id) await w.put('quotes', touch({ ...q, invoiceId: '' }));
-    }
+    await unlinkOnDelete(w, inv);
     await w.audit({ action: 'Rechnungsentwurf gelöscht', entity: 'invoices', entityId: id, label: 'Entwurf', prev: stripLarge(inv) });
+  });
+}
+
+/**
+ * Rechnung vollständig aus dem System entfernen – samt Zahlungen, Zahlungserinnerungen und einer
+ * dazugehörigen Gutschrift. Die Nummern werden wieder frei. Im Protokoll bleibt der Vorgang mit der
+ * letzten Fassung des Belegs stehen.
+ */
+export async function deleteInvoice(id) {
+  const inv = byId('invoices', id);
+  if (!inv) return null;
+  if (inv.type === 'credit_note') return removeCreditNote(id);
+  if (inv.status === 'draft' && !inv.number) { await deleteInvoiceDraft(id); return { number: '' }; }
+  return write(async (w) => {
+    const fresh = await w.get('invoices', id);
+    if (!fresh) return null;
+    const pays = await w.allByIndex('payments', 'invoiceId', id);
+    const rems = await w.allByIndex('reminders', 'invoiceId', id);
+    const credit = fresh.creditNoteId ? await w.get('invoices', fresh.creditNoteId) : null;
+    if (credit) {
+      await w.del('invoices', credit.id);
+      await releaseNumber(w, credit, 'credit');
+    }
+    for (const p of pays) await w.del('payments', p.id);
+    for (const r of rems) await w.del('reminders', r.id);
+    await w.del('invoices', id);
+    const freed = await releaseNumber(w, fresh, 'invoice');
+    await unlinkOnDelete(w, fresh);
+    const snapCustomer = (fresh.snapshot && fresh.snapshot.customer) || (await w.get('customers', fresh.customerId));
+    await w.audit({
+      action: 'Rechnung gelöscht', entity: 'invoices', entityId: id, label: fresh.number,
+      prev: {
+        number: fresh.number, status: fresh.status, totalCents: fresh.totals ? fresh.totals.totalCents : 0, currency: fresh.currency,
+        issueDate: fresh.issueDate, customer: customerName(snapCustomer) || '',
+        ...(pays.length ? { paymentsDeleted: pays.length, paidCents: sumPayments(pays) } : {}),
+        ...(rems.length ? { remindersDeleted: rems.length } : {}),
+        ...(credit ? { creditNote: credit.number } : {}),
+        // Vollständige letzte Fassung samt allem, was mitgelöscht wurde.
+        doc: clone(fresh), related: { payments: pays, reminders: rems, creditNote: credit || null },
+      },
+      next: { freedNumber: freed || '' },
+    });
+    return { number: fresh.number, freed, payments: pays.length, reminders: rems.length, creditNumber: credit ? credit.number : '' };
   });
 }
 
@@ -341,7 +367,58 @@ async function assignNumber(w, company, kind, dateISO) {
     !!(await w.byIndex('invoices', 'number', candidate)) || !!(await w.byIndex('quotes', 'number', candidate))
   ));
   await w.put('counters', { ...counter, last: n, updatedAt: nowISO() });
-  return number;
+  return { number, ref: { key, n } };
+}
+
+/**
+ * Nummer eines gelöschten Belegs wieder freigeben: Der Zähler geht auf den Stand vor dieser Nummer zurück,
+ * der nächste Beleg dieses Nummernkreises bekommt sie also wieder. Später vergebene Nummern bleiben, wie sie
+ * sind – beim Weiterzählen werden belegte Nummern übersprungen.
+ * Gibt die freigegebene Nummer zurück oder null, wenn sich der Zählerstand nicht zuordnen ließ.
+ */
+async function releaseNumber(w, doc, kind) {
+  if (!doc || !doc.number) return null;
+  let ref = doc.numberRef && doc.numberRef.key && Number(doc.numberRef.n) > 0 ? doc.numberRef : null;
+  if (!ref) {
+    // Ältere Belege kennen ihren Zählerstand nicht: aus Muster und Belegdatum zurückrechnen.
+    const company = await w.get('companies', doc.companyId);
+    if (!company || !isISODate(doc.issueDate)) return null;
+    const { prefix, pattern, digits } = numberingOf(company, kind);
+    if (validatePattern(pattern)) return null;
+    const key = counterKey(company.id, kind, pattern, doc.issueDate);
+    const c = await w.get('counters', key);
+    if (!c) return null;
+    for (let n = Number(c.last) || 0; n >= 1; n--) {
+      if (formatNumber(pattern, { prefix, dateISO: doc.issueDate, n, digits }) === doc.number) { ref = { key, n }; break; }
+    }
+    if (!ref) return null;
+  }
+  const counter = await w.get('counters', ref.key);
+  if (!counter) return null;
+  if ((Number(counter.last) || 0) >= ref.n) await w.put('counters', { ...counter, last: ref.n - 1, updatedAt: nowISO() });
+  return doc.number;
+}
+
+/** Verknüpfungen lösen, wenn eine Rechnung (Entwurf oder erstellt) gelöscht wird. */
+async function unlinkOnDelete(w, inv) {
+  // Stammt sie aus einer wiederkehrenden Vorlage und war sie deren letzter Lauf,
+  // wird der Termin zurückgestellt – sonst ginge der Abrechnungszeitraum verloren.
+  if (inv.recurringId) {
+    const rec = await w.get('recurring', inv.recurringId);
+    if (rec && rec.nextDate === addMonths(inv.issueDate, intervalMonths(rec), rec.anchorDay)) {
+      await w.put('recurring', touch({
+        ...rec, nextDate: inv.issueDate, generated: Math.max(0, (rec.generated || 0) - 1),
+        active: rec.endedByRun ? true : rec.active, endedByRun: false,
+      }));
+    }
+  }
+  // Stammt sie aus einem Angebot, wird die Verknüpfung gelöst; das Angebot gilt wieder als angenommen.
+  if (inv.quoteId) {
+    const q = await w.get('quotes', inv.quoteId);
+    if (q && q.invoiceId === inv.id) {
+      await w.put('quotes', touch({ ...q, invoiceId: '', status: q.status === 'invoiced' ? 'accepted' : q.status }));
+    }
+  }
 }
 
 export async function setCounter(company, kind, dateISO, last) {
@@ -380,7 +457,11 @@ export async function finalizeInvoice(draft) {
     // War die Rechnung schon einmal erstellt, behält sie ihre Nummer – es wird keine neue vergeben.
     const again = keepReserved(rec, inDb);
     const was = again ? (rec.reopened || {}) : null;
-    if (!again) rec.number = await assignNumber(w, company, 'invoice', rec.issueDate);
+    if (!again) {
+      const assigned = await assignNumber(w, company, 'invoice', rec.issueDate);
+      rec.number = assigned.number;
+      rec.numberRef = assigned.ref;
+    }
     rec.status = 'issued';
     rec.finalizedAt = nowISO();
     rec.sentAt = null;
@@ -413,7 +494,8 @@ export async function finalizeInvoice(draft) {
  * Erstellte Rechnung zurück in den Entwurf setzen. Sie behält ihre Nummer (die damit weiter vergeben
  * ist), lässt sich ändern und wird mit derselben Nummer neu erstellt. Die bisherige Fassung bleibt
  * vollständig im Protokoll erhalten – eine erstellte Rechnung ändert sich so nie unbemerkt.
- * Nicht möglich, solange Zahlungen eingetragen sind, und nicht für stornierte oder gutgeschriebene Belege.
+ * Eingetragene Zahlungen bleiben an der Rechnung und gelten nach dem Neu-Erstellen wieder.
+ * Nicht für stornierte oder gutgeschriebene Belege – dort zuerst Storno bzw. Gutschrift zurücknehmen.
  */
 export async function reopenInvoice(id) {
   const inv = byId('invoices', id);
@@ -424,10 +506,6 @@ export async function reopenInvoice(id) {
     const fresh = await w.get('invoices', id);
     if (!fresh || fresh.type === 'credit_note' || !['issued', 'sent'].includes(fresh.status)) {
       throw new UserError('Die Rechnung wurde zwischenzeitlich geändert und lässt sich nicht zurück in den Entwurf setzen.');
-    }
-    const pays = await w.allByIndex('payments', 'invoiceId', id);
-    if (pays.length) {
-      throw new UserError('Zu dieser Rechnung sind Zahlungen eingetragen. Entferne sie zuerst – danach lässt sich die Rechnung zurück in den Entwurf setzen.');
     }
     const snapCustomer = (fresh.snapshot && fresh.snapshot.customer) || (await w.get('customers', fresh.customerId));
     const summary = {
@@ -479,7 +557,7 @@ export async function saveInternalNotes(coll, id, internalNotes) {
   });
 }
 
-export async function addPayment(invoiceId, { date, amountCents, method, note }) {
+export async function addPayment(invoiceId, { date, amountCents, method, note, clarify }) {
   const inv = byId('invoices', invoiceId);
   if (!inv) fail('Rechnung nicht gefunden.');
   if (inv.type === 'credit_note' || ['draft', 'cancelled', 'credited'].includes(inv.status)) {
@@ -509,8 +587,84 @@ export async function addPayment(invoiceId, { date, amountCents, method, note })
       prev: { status: invoiceStatus(fresh, existing, todayISO()), paidCents: sumPayments(existing) },
       next: { status: invoiceStatus(fresh, after, todayISO()), paidCents: sumPayments(after), amountCents: amount, date, method },
     });
+    const why = String(clarify || '').trim();
+    if (why) {
+      await w.put('invoices', touch({ ...fresh, clarify: { note: why, at: nowISO() } }));
+      await w.audit({
+        action: 'Klärung vermerkt', entity: 'invoices', entityId: invoiceId, label: inv.number,
+        prev: fresh.clarify ? { note: fresh.clarify.note } : null, next: { note: why },
+      });
+    }
   });
   return payment;
+}
+
+/** Zahlung oder Erstattung nachträglich berichtigen (Datum, Betrag, Zahlungsart, Notiz). */
+export async function updatePayment(paymentId, { date, amountCents, method, note }) {
+  const known = byId('payments', paymentId);
+  if (!known) fail('Zahlung nicht gefunden.');
+  if (!isISODate(date)) fail('Bitte ein gültiges Zahlungsdatum eintragen.');
+  const amount = Math.round(Number(amountCents));
+  if (!(amount > 0)) fail('Bitte einen Betrag größer als null eintragen.');
+  return write(async (w) => {
+    const cur = await w.get('payments', paymentId);
+    if (!cur) throw new UserError('Diese Zahlung gibt es nicht mehr.');
+    const isRefund = cur.amountCents < 0;
+    const inv = await w.get('invoices', cur.invoiceId);
+    const others = (await w.allByIndex('payments', 'invoiceId', cur.invoiceId)).filter((x) => x.id !== paymentId);
+    const signed = isRefund ? -amount : amount;
+    const sum = sumPayments(others) + signed;
+    if (sum < 0) {
+      throw new UserError(isRefund
+        ? 'Der Betrag ist höher als die eingegangenen Zahlungen.'
+        : 'Zu dieser Rechnung gibt es eine Erstattung, die dann höher wäre als die Zahlungen. Bitte zuerst die Erstattung anpassen.');
+    }
+    const total = inv && inv.totals ? inv.totals.totalCents : null;
+    if (!isRefund && total != null && sum > total) throw new UserError('Mit diesem Betrag wäre mehr bezahlt, als die Rechnung ausweist.');
+    const rec = { ...cur, date, amountCents: signed, method: method || '', note: note || '', updatedAt: nowISO() };
+    const d = diffFields(cur, rec, ['updatedAt', 'createdAt']);
+    if (!Object.keys(d.next).length) return rec;
+    await w.put('payments', rec);
+    await w.audit({
+      action: isRefund ? 'Erstattung geändert' : 'Zahlung geändert', entity: 'invoices', entityId: cur.invoiceId, label: inv ? inv.number : '',
+      prev: d.prev, next: d.next,
+    });
+    return rec;
+  });
+}
+
+/* ---------- Klärungsvermerk ---------- */
+
+/** Rechnung als „Klärung nötig“ kennzeichnen, z. B. weil der Kunde weniger überwiesen hat. */
+export async function setClarification(invoiceId, note) {
+  const text = String(note || '').trim();
+  if (!text) fail('Bitte kurz notieren, was zu klären ist.');
+  return write(async (w) => {
+    const fresh = await w.get('invoices', invoiceId);
+    if (!fresh || fresh.status === 'draft') throw new UserError('Zu diesem Beleg lässt sich keine Klärung vermerken.');
+    const rec = touch({ ...fresh, clarify: { note: text, at: (fresh.clarify && fresh.clarify.at) || nowISO() } });
+    await w.put('invoices', rec);
+    await w.audit({
+      action: fresh.clarify ? 'Klärungsvermerk geändert' : 'Klärung vermerkt', entity: 'invoices', entityId: invoiceId, label: fresh.number,
+      prev: fresh.clarify ? { note: fresh.clarify.note } : null, next: { note: text },
+    });
+    return rec;
+  });
+}
+
+export async function resolveClarification(invoiceId, result) {
+  return write(async (w) => {
+    const fresh = await w.get('invoices', invoiceId);
+    if (!fresh || !fresh.clarify) return fresh;
+    const rec = touch({ ...fresh });
+    delete rec.clarify;
+    await w.put('invoices', rec);
+    await w.audit({
+      action: 'Klärung erledigt', entity: 'invoices', entityId: invoiceId, label: fresh.number,
+      prev: { note: fresh.clarify.note }, next: { result: String(result || '').trim() },
+    });
+    return rec;
+  });
 }
 
 /**
@@ -568,12 +722,29 @@ export async function cancelInvoice(id, reason) {
     const pays = await w.allByIndex('payments', 'invoiceId', id);
     if (!fresh || !['issued', 'sent'].includes(fresh.status)) throw new UserError('Die Rechnung wurde zwischenzeitlich geändert und kann nicht storniert werden.');
     if (sumPayments(pays) > 0) throw new UserError('Zu dieser Rechnung gibt es Zahlungen. Bitte zuerst die Zahlungen entfernen oder eine Gutschrift erstellen.');
-    const rec = touch({ ...fresh, status: 'cancelled', cancelledAt: nowISO(), cancelReason: reason || '' });
+    const rec = touch({ ...fresh, status: 'cancelled', statusBeforeCancel: fresh.status, cancelledAt: nowISO(), cancelReason: reason || '' });
     await w.put('invoices', rec);
     await w.audit({
       action: 'Rechnung storniert', entity: 'invoices', entityId: id, label: inv.number,
       prev: { status: inv.status }, next: { status: 'cancelled', reason: reason || '' },
     });
+  });
+}
+
+/** Stornierung zurücknehmen: Die Rechnung gilt wieder wie vor dem Storno und zählt wieder zum Umsatz. */
+export async function uncancelInvoice(id) {
+  return write(async (w) => {
+    const fresh = await w.get('invoices', id);
+    if (!fresh || fresh.status !== 'cancelled') throw new UserError('Diese Rechnung ist nicht storniert.');
+    const status = ['issued', 'sent'].includes(fresh.statusBeforeCancel) ? fresh.statusBeforeCancel : (fresh.sentAt ? 'sent' : 'issued');
+    const rec = touch({ ...fresh, status });
+    delete rec.statusBeforeCancel; delete rec.cancelledAt; delete rec.cancelReason;
+    await w.put('invoices', rec);
+    await w.audit({
+      action: 'Stornierung zurückgenommen', entity: 'invoices', entityId: id, label: fresh.number,
+      prev: { status: 'cancelled', reason: fresh.cancelReason || '' }, next: { status },
+    });
+    return rec;
   });
 }
 
@@ -609,16 +780,57 @@ export async function createCreditNote(invoiceId, reason) {
   return write(async (w) => {
     const fresh = await w.get('invoices', inv.id);
     if (!fresh || !['issued', 'sent'].includes(fresh.status)) throw new UserError('Die Rechnung wurde zwischenzeitlich geändert.');
-    credit.number = await assignNumber(w, company, 'credit', credit.issueDate);
+    const assigned = await assignNumber(w, company, 'credit', credit.issueDate);
+    credit.number = assigned.number;
+    credit.numberRef = assigned.ref;
     credit.finalizedAt = nowISO();
     credit.snapshot = { company: clone(company), customer: clone(inv.snapshot ? inv.snapshot.customer : byId('customers', inv.customerId)), at: nowISO() };
     await w.put('invoices', credit);
-    await w.put('invoices', touch({ ...fresh, status: 'credited', creditNoteId: credit.id }));
+    await w.put('invoices', touch({ ...fresh, status: 'credited', statusBeforeCredit: fresh.status, creditNoteId: credit.id }));
     await w.audit({
       action: 'Gutschrift erstellt', entity: 'invoices', entityId: inv.id, label: `${credit.number} zu ${inv.number}`,
       prev: { status: fresh.status }, next: { status: 'credited', creditNote: credit.number, totalCents: credit.totals.totalCents, reason: reason || '' },
     });
     return credit;
+  });
+}
+
+/**
+ * Gutschrift zurücknehmen: Der Gutschriftsbeleg wird gelöscht, seine Nummer wird frei, und die Rechnung
+ * gilt wieder wie vorher. `anyId` ist die Gutschrift selbst oder die Rechnung, zu der sie gehört.
+ * Nicht möglich, solange eine Erstattung eingetragen ist.
+ */
+export async function removeCreditNote(anyId) {
+  const doc = byId('invoices', anyId);
+  if (!doc) fail('Beleg nicht gefunden.');
+  const creditId = doc.type === 'credit_note' ? doc.id : doc.creditNoteId;
+  if (!creditId) fail('Zu dieser Rechnung gibt es keine Gutschrift.');
+  return write(async (w) => {
+    const credit = await w.get('invoices', creditId);
+    if (!credit || credit.type !== 'credit_note') throw new UserError('Diese Gutschrift gibt es nicht mehr.');
+    const orig = credit.relatedInvoiceId ? await w.get('invoices', credit.relatedInvoiceId) : null;
+    if (orig) {
+      const pays = await w.allByIndex('payments', 'invoiceId', orig.id);
+      if (pays.some((p) => p.amountCents < 0)) {
+        throw new UserError(`Zur Rechnung ${orig.number} ist eine Erstattung eingetragen. Entferne sie zuerst – danach lässt sich die Gutschrift zurücknehmen.`);
+      }
+    }
+    await w.del('invoices', creditId);
+    const freed = await releaseNumber(w, credit, 'credit');
+    let status = '';
+    if (orig && orig.status === 'credited') {
+      status = ['issued', 'sent'].includes(orig.statusBeforeCredit) ? orig.statusBeforeCredit : (orig.sentAt ? 'sent' : 'issued');
+      const rec = touch({ ...orig, status });
+      delete rec.creditNoteId; delete rec.statusBeforeCredit;
+      await w.put('invoices', rec);
+    }
+    await w.audit({
+      action: 'Gutschrift zurückgenommen', entity: 'invoices', entityId: orig ? orig.id : creditId,
+      label: orig ? `${credit.number} zu ${orig.number}` : credit.number,
+      prev: { status: orig ? orig.status : 'credit_note', creditNote: credit.number, totalCents: credit.totals ? credit.totals.totalCents : 0, doc: clone(credit) },
+      next: { ...(status ? { status } : {}), freedNumber: freed || '' },
+    });
+    return { creditNumber: credit.number, invoiceId: orig ? orig.id : '', invoiceNumber: orig ? orig.number : '' };
   });
 }
 
@@ -680,7 +892,9 @@ export async function finalizeQuote(draft) {
   return write(async (w) => {
     const inDb = await w.get('quotes', rec.id);
     if (inDb && inDb.status !== 'draft') throw new UserError('Dieses Angebot wurde bereits in einem anderen Fenster erstellt.');
-    rec.number = await assignNumber(w, company, 'quote', rec.issueDate);
+    const assigned = await assignNumber(w, company, 'quote', rec.issueDate);
+    rec.number = assigned.number;
+    rec.numberRef = assigned.ref;
     rec.status = 'open';
     rec.finalizedAt = nowISO();
     rec.snapshot = snapshotOf(company, customer);

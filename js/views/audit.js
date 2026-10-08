@@ -1,6 +1,7 @@
 // Protokoll: nachvollziehbare Historie aller wichtigen Änderungen.
 
-import { html, useState, useMemo, useStore } from '../ui/core.js';
+import { html, useState, useMemo, useStore, attempt } from '../ui/core.js';
+import { downloadOldVersion } from './invoices.js';
 import { PageHeader, SearchInput, EmptyState, Button } from '../ui/components.js';
 import { state } from '../lib/store.js';
 import { dateTime } from '../lib/format.js';
@@ -21,7 +22,8 @@ const FIELD = {
   logoAssetId: 'Logo', brandColor: 'Markenfarbe', invoicePrefix: 'Präfix Rechnungen', invoicePattern: 'Muster Rechnungen',
   defaultTaxRate: 'Standard-Steuersatz', paymentTermDays: 'Zahlungsziel', accountHolder: 'Kontoinhaber', bankName: 'Bank',
   street: 'Straße', zip: 'PLZ', city: 'Ort', country: 'Land', taxId: 'Steuernummer', vatId: 'USt-IdNr.', active: 'Aktiv',
-  issueDate: 'Belegdatum', customer: 'Kunde', nextDate: 'Nächster Termin', invoiceDraftId: 'Rechnungsentwurf', counts: 'Umfang',
+  issueDate: 'Belegdatum', customer: 'Kunde', paymentsDeleted: 'Gelöschte Zahlungen', remindersDeleted: 'Gelöschte Erinnerungen',
+  freedNumber: 'Nummer wieder frei', result: 'Ergebnis', nextDate: 'Nächster Termin', invoiceDraftId: 'Rechnungsentwurf', counts: 'Umfang',
 };
 
 function show(key, value) {
@@ -36,15 +38,15 @@ function show(key, value) {
 
 function Changes({ entry }) {
   const keys = [...new Set([...Object.keys(entry.prev || {}), ...Object.keys(entry.next || {})])]
-    .filter((k) => !['id', 'createdAt', 'updatedAt', 'items', 'totals', 'snapshot', 'fx', 'ai', 'attachmentIds', 'doc'].includes(k));
+    .filter((k) => !['id', 'createdAt', 'updatedAt', 'items', 'totals', 'snapshot', 'fx', 'ai', 'attachmentIds', 'doc', 'related'].includes(k));
   if (!keys.length) return html`<span class="muted-text">–</span>`;
   return html`<ul class="changes">
-    ${keys.slice(0, 8).map((k) => html`<li key=${k}>
+    ${keys.slice(0, 10).map((k) => html`<li key=${k}>
       <span class="changes-key">${FIELD[k] || k}</span>
       ${entry.prev && k in entry.prev && html`<span class="changes-old">${show(k, entry.prev[k])}</span>`}
       ${entry.next && k in entry.next && html`<span class="changes-new">${show(k, entry.next[k])}</span>`}
     </li>`)}
-    ${keys.length > 8 && html`<li class="muted-text">und ${keys.length - 8} weitere Felder</li>`}
+    ${keys.length > 10 && html`<li class="muted-text">und ${keys.length - 10} weitere Felder</li>`}
   </ul>`;
 }
 
@@ -53,6 +55,7 @@ export function AuditView() {
   const [q, setQ] = useState('');
   const [entity, setEntity] = useState('');
   const [limit, setLimit] = useState(200);
+  const [busy, setBusy] = useState('');
   const all = useMemo(() => [...state.audit].sort((a, b) => (a.at < b.at ? 1 : -1)), [state.version]);
   const rows = all.filter((a) => (!entity || a.entity === entity) && matches(q, a.action, a.label, a.user));
 
@@ -85,7 +88,9 @@ export function AuditView() {
               <td class="nw">${dateTime(a.at)}</td>
               <td><span class="cell-main">${a.action}</span><div class="cell-sub">${ENTITY[a.entity] || a.entity}</div></td>
               <td>${a.label}</td>
-              <td><${Changes} entry=${a} /></td>
+              <td><${Changes} entry=${a} />
+                ${a.entity === 'invoices' && a.prev && a.prev.doc && html`<${Button} small icon="download" busy=${busy === a.id}
+                  onClick=${async () => { setBusy(a.id); await attempt(() => downloadOldVersion(a)); setBusy(''); }}>Fassung als PDF<//>`}</td>
               <td>${a.user}</td>
             </tr>`)}
           </tbody>

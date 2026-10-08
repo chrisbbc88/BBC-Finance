@@ -10,7 +10,8 @@ import {
 } from '../ui/components.js';
 import { Icon } from '../ui/icons.js';
 import { DocSheet } from '../ui/docview.js';
-import { state, byId, activeCompanies, currentCompany } from '../lib/store.js';
+import { state, byId, activeCompanies, currentCompany, paymentsOf } from '../lib/store.js';
+import { removeInvoice } from './invoice-actions.js';
 import {
   newInvoice, newQuote, newItem, customerName, LANGUAGES, DOC_CURRENCIES, UNITS, newCustomer, newService,
 } from '../lib/schema.js';
@@ -18,7 +19,7 @@ import {
   saveInvoiceDraft, finalizeInvoice, deleteInvoiceDraft, saveQuoteDraft, finalizeQuote, deleteQuote,
   itemFromService, dueDateOf, validateDoc, peekNumber, duplicateAsDraft,
 } from '../lib/actions.js';
-import { computeTotals, convertCents, fxForDoc, lineTotalCents } from '../lib/calc.js';
+import { computeTotals, convertCents, fxForDoc, lineTotalCents, sumPayments } from '../lib/calc.js';
 import { fxFor, lastKnownRate, wantedRateDate } from '../lib/fx.js';
 import { buildDocModel } from '../lib/docmodel.js';
 import { money, date, dateTime, rate, pct } from '../lib/format.js';
@@ -273,6 +274,8 @@ export function DocEditorView({ coll, id, params }) {
   // Trägt der Entwurf schon eine Nummer, war die Rechnung bereits erstellt („Zurück in den Entwurf“).
   const reserved = coll === 'invoices' && doc.number ? doc.number : '';
   const was = reserved ? (doc.reopened || {}) : null;
+  // Zahlungen bleiben an einer zurückgesetzten Rechnung hängen und gelten nach dem Neu-Erstellen wieder.
+  const paidAlready = reserved ? sumPayments(paymentsOf(doc.id)) : 0;
 
   const customerOptions = state.customers
     .filter((c) => c.active !== false || c.id === doc.customerId)
@@ -375,6 +378,9 @@ export function DocEditorView({ coll, id, params }) {
       list: [
         `${customerName(customer)}`,
         `${money(totals.totalCents, doc.currency)}${secondary != null ? ` (≈ ${money(secondary, other)})` : ''}`,
+        ...(paidAlready > 0 ? [paidAlready > totals.totalCents
+          ? `Achtung: Eingegangen sind bereits ${money(paidAlready, doc.currency)} – mehr als der neue Betrag. Bitte danach die Zahlung berichtigen.`
+          : `Bereits eingegangen: ${money(paidAlready, doc.currency)}`] : []),
       ],
       confirmLabel: K.finalize,
     });
@@ -389,6 +395,11 @@ export function DocEditorView({ coll, id, params }) {
   }
 
   async function removeDraft() {
+    // War die Rechnung schon erstellt, wird sie samt Zahlungen gelöscht und ihre Nummer frei.
+    if (reserved) {
+      if (await removeInvoice(byId('invoices', doc.id) || doc)) navigateForce(K.list);
+      return;
+    }
     const ok = await ask({ title: 'Entwurf löschen?', text: 'Der Entwurf wird endgültig gelöscht.', confirmLabel: 'Löschen', danger: true });
     if (!ok) return;
     const done = await attempt(async () => { await (coll === 'invoices' ? deleteInvoiceDraft(doc.id) : deleteQuote(doc.id)); return true; });
@@ -404,7 +415,7 @@ export function DocEditorView({ coll, id, params }) {
         ? 'Entwurf – die Nummer bleibt erhalten'
         : (previewNumber ? `Nächste Nummer: ${previewNumber}` : (company ? '' : 'Wähle zuerst das Unternehmen, das den Beleg ausstellt.'))}>
       <${Button} class="only-narrow" icon="eye" onClick=${() => setShowPreview(!showPreview)}>${showPreview ? 'Formular' : 'Vorschau'}<//>
-      ${isSaved && !reserved && html`<${Menu} items=${[{ label: 'Entwurf löschen', icon: 'trash', danger: true, onClick: removeDraft }]} />`}
+      ${isSaved && html`<${Menu} items=${[{ label: reserved ? 'Rechnung löschen' : 'Entwurf löschen', icon: 'trash', danger: true, onClick: removeDraft }]} />`}
       <${Button} icon="check" onClick=${saveDraft} busy=${busy === 'save'} disabled=${!!busy}>Entwurf speichern<//>
       <${Button} variant="primary" icon="invoice" onClick=${finalize} busy=${busy === 'finalize'} disabled=${!!busy}>${K.finalize}<//>
     <//>
@@ -413,6 +424,7 @@ export function DocEditorView({ coll, id, params }) {
       Diese Rechnung war bereits erstellt${was.finalizedAt ? ` (${dateTime(was.finalizedAt)})` : ''} und ist zurück im Entwurf.
       Ändere, was nötig ist, und klicke auf „Rechnung erstellen“ – sie behält die Nummer ${reserved}.
       Bis dahin zählt sie nicht zum Umsatz und gilt nicht als offen.
+      ${paidAlready > 0 ? ` Die eingetragenen Zahlungen (${money(paidAlready, doc.currency)}) bleiben erhalten.` : ''}
       ${was.wasSent ? ' Sie war als versendet markiert: Schick dem Kunden danach die neue Fassung.' : ''}
     <//>`}
 

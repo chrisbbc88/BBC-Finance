@@ -92,6 +92,7 @@ export function DashboardView() {
   // Entwürfe mit Nummer waren schon erstellt und warten darauf, neu erstellt zu werden – sie fehlen so lange im Umsatz.
   const reopened = allDrafts.filter((i) => i.number);
   const drafts = allDrafts.filter((i) => !i.number);
+  const toClarify = state.invoices.filter(inScope).filter((i) => i.clarify && i.status !== 'draft');
   const expiring = state.quotes.filter(inScope).filter((q) => ['open', 'sent'].includes(quoteStatus(q, today)) && q.validUntil && q.validUntil <= addDays(today, 7));
 
   // Diagramm: je Unternehmen gestapelt, wenn „Alle“ gewählt ist und es mehrere gibt
@@ -145,7 +146,7 @@ export function DashboardView() {
         <//>
       </div>
       <${Panel} title="Zu erledigen" class="dash-side">
-        ${(overdue.length + dueSoon.length + dueRecurring.length + toReview.length + allDrafts.length + expiring.length) === 0
+        ${(overdue.length + dueSoon.length + dueRecurring.length + toReview.length + allDrafts.length + expiring.length + toClarify.length) === 0
           ? html`<p class="muted-text">Alles erledigt. Keine überfälligen Rechnungen, keine offenen Belege.</p>`
           : html`<ul class="todo">
             ${overdue.slice(0, 5).map((r) => html`<li key=${r.inv.id}>
@@ -165,6 +166,13 @@ export function DashboardView() {
                 <span class="todo-amount">${money(r.openCents, r.inv.currency)}</span>
               </a>
             </li>`)}
+            ${toClarify.slice(0, 5).map((i) => html`<li key=${`c-${i.id}`}><a href=${`#/invoices/${i.id}`}>
+              <span class="todo-icon tone-warn"><${Icon} name="warn" /></span>
+              <span class="todo-text"><strong>${i.number}</strong> ${customerLabel(i)}
+                <span class="cell-sub">Klärung nötig: ${i.clarify.note}</span></span></a></li>`)}
+            ${toClarify.length > 5 && html`<li><a href="#/invoices?status=clarify">
+              <span class="todo-icon tone-warn"><${Icon} name="warn" /></span>
+              <span class="todo-text"><strong>${toClarify.length - 5} weitere</strong><span class="cell-sub">mit Klärungsbedarf</span></span></a></li>`}
             ${reopened.slice(0, 5).map((i) => html`<li key=${i.id}><a href=${`#/invoices/${i.id}/edit`}>
               <span class="todo-icon tone-warn"><${Icon} name="edit" /></span>
               <span class="todo-text"><strong>${i.number}</strong> ${customerLabel(i)}

@@ -148,10 +148,12 @@ export function useDialog() {
  * Rückfrage. opts: { title, text, confirmLabel, cancelLabel, danger, input: {label, value, placeholder, multiline} }
  * Ergebnis: true/false – oder bei input der eingegebene Text bzw. null bei Abbruch.
  */
+let dialogSeq = 0;
 export function ask(opts) {
   return new Promise((resolve) => {
     setDialog({
       ...opts,
+      id: ++dialogSeq,
       resolve: (value) => { setDialog(null); resolve(value); },
     });
   });

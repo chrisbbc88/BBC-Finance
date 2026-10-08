@@ -3,19 +3,21 @@
 import { html, useState, useMemo, useStore, navigate, toast, attempt, ask } from '../ui/core.js';
 import {
   Button, PageHeader, DataTable, SearchInput, Chips, EmptyState, Modal, TextField, TextArea,
-  SelectField, NumberField, DateField, Panel, KV, Menu, Notice,
+  SelectField, NumberField, DateField, Panel, KV, Menu, Notice, Checkbox,
 } from '../ui/components.js';
 import { DocSheet } from '../ui/docview.js';
 import { state, byId, paymentsOf, remindersOf, inScope, currentCompany } from '../lib/store.js';
 import { REMINDER_LEVELS } from '../lib/schema.js';
 import {
-  addPayment, addRefund, deletePayment, cancelInvoice, createCreditNote, markInvoiceSent, saveInternalNotes, reopenInvoice,
+  addPayment, addRefund, updatePayment, deletePayment, cancelInvoice, uncancelInvoice, createCreditNote, removeCreditNote,
+  markInvoiceSent, saveInternalNotes, reopenInvoice, setClarification, resolveClarification,
 } from '../lib/actions.js';
+import { removeInvoice } from './invoice-actions.js';
 import { docDefinition, pdfBlob, saveBlob } from '../lib/pdf.js';
 import { buildDocModel } from '../lib/docmodel.js';
 import { sumPayments, toUSD } from '../lib/calc.js';
 import { money, date, dateTime, rate } from '../lib/format.js';
-import { matches, todayISO, periodRange, inRange, PERIODS, daysBetween } from '../lib/util.js';
+import { matches, todayISO, toISODate, periodRange, inRange, PERIODS, daysBetween } from '../lib/util.js';
 import {
   statusOf, InvoiceBadge, DocAmount, CompanyTag, customerLabel, invoiceOpen,
 } from './shared.js';
@@ -30,6 +32,7 @@ const GROUPS = [
   { id: 'overdue', label: 'Überfällig', test: (s) => s === 'overdue' },
   { id: 'paid', label: 'Bezahlt', test: (s) => s === 'paid' },
   { id: 'void', label: 'Storniert und Gutschriften', test: (s) => ['cancelled', 'credited', 'credit_note'].includes(s) },
+  { id: 'clarify', label: 'Klärung nötig', test: (s, inv) => !!inv.clarify && s !== 'draft' },
 ];
 
 export function InvoicesView({ params }) {
@@ -45,7 +48,7 @@ export function InvoicesView({ params }) {
   const range = periodRange(period, today);
   const inPeriod = scoped.filter((r) => period === 'all' || inRange(r.inv.issueDate, range));
   const rows = inPeriod
-    .filter((r) => GROUPS.find((g) => g.id === group).test(r.status))
+    .filter((r) => GROUPS.find((g) => g.id === group).test(r.status, r.inv))
     .filter((r) => matches(q, r.inv.number, customerLabel(r.inv), (byId('companies', r.inv.companyId) || {}).name,
       r.inv.totals ? (r.inv.totals.totalCents / 100).toFixed(2) : '', r.inv.totals ? (r.inv.totals.totalCents / 100).toFixed(2).replace('.', ',') : '',
       (r.inv.items || []).map((i) => i.name).join(' ')));
@@ -103,12 +106,14 @@ export function InvoicesView({ params }) {
     ${state.invoices.length > 0 && html`<div class="filters">
       <${SearchInput} value=${q} onInput=${setQ} placeholder="Nummer, Kunde, Betrag, Leistung" />
       <${Chips} label="Status" value=${group} onChange=${setGroup}
-        options=${GROUPS.map((g) => ({ id: g.id, label: g.label, count: inPeriod.filter((r) => g.test(r.status)).length }))} />
+        options=${GROUPS.map((g) => ({ id: g.id, label: g.label, count: inPeriod.filter((r) => g.test(r.status, r.inv)).length }))
+          .filter((o) => o.id !== 'clarify' || o.count > 0 || group === 'clarify')} />
       <select class="input select filter-select" value=${period} aria-label="Zeitraum" onChange=${(e) => setPeriod(e.target.value)}>
         ${PERIODS.filter((p) => p.id !== 'custom').map((p) => html`<option value=${p.id}>${p.label}</option>`)}
       </select>
     </div>`}
     <${DataTable} columns=${columns} rows=${rows} rowKey=${(r) => r.inv.id} initialSort=${{ key: 'date', dir: 'desc' }} footer=${footer}
+      rowClass=${(r) => (r.inv.clarify && r.status !== 'draft' ? 'row-clarify' : '')}
       onRowClick=${(r) => navigate(r.inv.status === 'draft' ? `/invoices/${r.inv.id}/edit` : `/invoices/${r.inv.id}`)}
       empty=${state.invoices.length
         ? html`<${EmptyState} icon="search" title="Keine Treffer" text="Zu diesen Filtern gibt es keine Rechnung." />`
@@ -121,39 +126,75 @@ export function InvoicesView({ params }) {
 
 /* ---------- Zahlung eintragen ---------- */
 
-function PaymentModal({ inv, refund, onClose }) {
-  const open = refund ? sumPayments(paymentsOf(inv.id)) : invoiceOpen(inv);
-  const [p, setP] = useState({ date: todayISO(), amountCents: open, method: (state.settings.paymentMethods || [])[0] || '', note: '' });
+/**
+ * Zahlung oder Erstattung eintragen – oder, mit `payment`, eine vorhandene berichtigen.
+ * Bleibt bei einer neuen Zahlung ein Rest offen, lässt sich die Differenz gleich als „Klärung nötig“ vermerken.
+ */
+function PaymentModal({ inv, refund, payment, onClose }) {
+  const edit = !!payment;
+  const isRefund = edit ? payment.amountCents < 0 : !!refund;
+  const others = edit ? paymentsOf(inv.id).filter((x) => x.id !== payment.id) : paymentsOf(inv.id);
+  const total = inv.totals ? inv.totals.totalCents : 0;
+  // Höchstbetrag: bei Erstattungen das bisher Eingegangene, sonst der offene Betrag (ohne die Zahlung, die gerade bearbeitet wird).
+  const open = isRefund ? sumPayments(others) : (edit ? Math.max(total - sumPayments(others), 0) : invoiceOpen(inv));
+  const methods = state.settings.paymentMethods || [];
+  const [p, setP] = useState(edit
+    ? { date: payment.date, amountCents: Math.abs(payment.amountCents), method: payment.method || '', note: payment.note || '' }
+    : { date: todayISO(), amountCents: open, method: methods[0] || '', note: '' });
+  const [clar, setClar] = useState(false);
+  const [why, setWhy] = useState('');
   const [busy, setBusy] = useState(false);
   const set = (k) => (v) => setP((prev) => ({ ...prev, [k]: v }));
+  const what = isRefund ? 'Erstattung' : 'Zahlung';
+  const rest = !isRefund && !edit ? open - (Number(p.amountCents) || 0) : 0;
+  const methodOptions = p.method && !methods.includes(p.method) ? [p.method, ...methods] : methods;
+
   async function submit() {
     setBusy(true);
-    const ok = await attempt(() => (refund ? addRefund(inv.id, p) : addPayment(inv.id, p)));
+    const clarify = rest > 0 && clar
+      ? (why.trim() || `Differenz von ${money(rest, inv.currency)} offen (eingegangen: ${money(p.amountCents, inv.currency)} am ${date(p.date)}).`)
+      : '';
+    const ok = await attempt(() => {
+      if (edit) return updatePayment(payment.id, p);
+      return isRefund ? addRefund(inv.id, p) : addPayment(inv.id, { ...p, clarify });
+    });
     setBusy(false);
-    if (ok) {
-      toast(refund ? 'Erstattung eingetragen' : (p.amountCents >= open ? 'Zahlung eingetragen – Rechnung ist bezahlt' : 'Teilzahlung eingetragen'), 'good');
-      onClose();
-    }
+    if (!ok) return;
+    if (edit) toast(`${what} geändert`, 'good');
+    else if (isRefund) toast('Erstattung eingetragen', 'good');
+    else if (rest > 0) toast(clarify ? 'Teilzahlung eingetragen – Klärung vermerkt' : 'Teilzahlung eingetragen', 'good');
+    else toast('Zahlung eingetragen – Rechnung ist bezahlt', 'good');
+    onClose();
   }
-  return html`<${Modal} title=${`${refund ? 'Erstattung' : 'Zahlung'} zu ${inv.number}`} onClose=${onClose} size="sm" onSubmit=${submit}
-    footer=${html`<${Button} onClick=${onClose}>Abbrechen<//><${Button} variant="primary" type="submit" busy=${busy}>${refund ? 'Erstattung eintragen' : 'Zahlung eintragen'}<//>`}>
-    <p class="dialog-text">${refund ? `Eingegangen und noch nicht erstattet sind ${money(open, inv.currency)}.` : `Offen sind ${money(open, inv.currency)}.`}</p>
+
+  return html`<${Modal} title=${`${what} zu ${inv.number}${edit ? ' ändern' : ''}`} onClose=${onClose} size="sm" onSubmit=${submit}
+    footer=${html`<${Button} onClick=${onClose}>Abbrechen<//><${Button} variant="primary" type="submit" busy=${busy}>${edit ? 'Änderung speichern' : `${what} eintragen`}<//>`}>
+    <p class="dialog-text">${isRefund
+      ? `${edit ? 'Höchstens' : 'Eingegangen und noch nicht erstattet sind'} ${money(open, inv.currency)}.`
+      : (edit ? `Höchstens ${money(open, inv.currency)} – mehr weist die Rechnung nicht aus.` : `Offen sind ${money(open, inv.currency)}.`)}</p>
     <div class="form-grid">
       <${NumberField} class="span-3" label=${`Betrag (${inv.currency})`} mode="money" value=${p.amountCents} onChange=${set('amountCents')} min=${0} />
-      <${DateField} class="span-3" label="Zahlungsdatum" value=${p.date} onInput=${set('date')} max=${todayISO()} />
-      <${SelectField} class="span-6" label="Zahlungsart" value=${p.method} onChange=${set('method')} options=${state.settings.paymentMethods || []} placeholder="Keine Angabe" />
+      <${DateField} class="span-3" label=${isRefund ? 'Datum' : 'Zahlungsdatum'} value=${p.date} onInput=${set('date')} max=${todayISO()} />
+      <${SelectField} class="span-6" label="Zahlungsart" value=${p.method} onChange=${set('method')} options=${methodOptions} placeholder="Keine Angabe" />
       <${TextField} class="span-6" label="Notiz" value=${p.note} onInput=${set('note')} />
     </div>
+    ${rest > 0 && html`<div class="pay-rest">
+      <p class="pay-rest-line">Es bleiben <strong>${money(rest, inv.currency)}</strong> offen.</p>
+      <${Checkbox} label="Differenz muss geklärt werden" checked=${clar} onChange=${setClar}
+        hint="Die Rechnung wird gelb mit „Klärung nötig“ markiert, bis du die Klärung abhakst." />
+      ${clar && html`<${TextArea} label="Was ist zu klären?" value=${why} onInput=${setWhy} rows=${2}
+        placeholder="z. B. Kunde hat Bankgebühren abgezogen – nachfragen" />`}
+    </div>`}
   <//>`;
 }
 
 /* ---------- Detail ---------- */
 
 /** PDF einer früheren Fassung: Sie steht vollständig im Protokolleintrag „zurück in den Entwurf“. */
-async function downloadOldVersion(entry) {
+export async function downloadOldVersion(entry) {
   const model = buildDocModel(entry.prev.doc, 'invoices');
   const blob = await pdfBlob(docDefinition(model));
-  saveBlob(blob, model.fileName.replace(/\.pdf$/, ` (Fassung bis ${date(String(entry.at).slice(0, 10))}).pdf`));
+  saveBlob(blob, model.fileName.replace(/\.pdf$/, ` (Fassung bis ${date(toISODate(new Date(entry.at)))}).pdf`));
 }
 
 export function History({ entityId }) {
@@ -214,7 +255,7 @@ export function InvoiceDetailView({ id }) {
     }
     const reason = await ask({
       title: `Rechnung ${inv.number} stornieren?`,
-      text: 'Die Rechnung bleibt mit ihrer Nummer erhalten, zählt aber nicht mehr zum Umsatz und ist nicht mehr offen. Das lässt sich nicht rückgängig machen.',
+      text: 'Die Rechnung bleibt mit ihrer Nummer erhalten, zählt aber nicht mehr zum Umsatz und ist nicht mehr offen. Du kannst das Storno später zurücknehmen.',
       input: { label: 'Grund (intern)', placeholder: 'z. B. falscher Betrag', multiline: false },
       confirmLabel: 'Stornieren', danger: true,
     });
@@ -224,13 +265,9 @@ export function InvoiceDetailView({ id }) {
   }
 
   async function reopen() {
-    if (payments.length) {
-      toast('Zu dieser Rechnung sind Zahlungen eingetragen. Entferne sie zuerst – danach lässt sie sich zurück in den Entwurf setzen.', 'bad', 7000);
-      return;
-    }
     const ok = await ask({
       title: `Rechnung ${inv.number} zurück in den Entwurf?`,
-      text: `Die Rechnung behält ihre Nummer. Du kannst sie ändern und danach neu erstellen – es wird keine neue Nummer vergeben. Bis dahin zählt sie nicht zum Umsatz und gilt nicht als offen. Die bisherige Fassung bleibt im Verlauf abrufbar.${inv.status === 'sent' ? ' Diese Rechnung ist als versendet markiert: Der Kunde hat die bisherige Fassung. Schick ihm nach dem Ändern die neue.' : ''}`,
+      text: `Die Rechnung behält ihre Nummer. Du kannst sie ändern und danach neu erstellen – es wird keine neue Nummer vergeben. Bis dahin zählt sie nicht zum Umsatz und gilt nicht als offen. Die bisherige Fassung bleibt im Verlauf abrufbar.${payments.length ? ` Die eingetragenen Zahlungen (${money(paid, inv.currency)}) bleiben erhalten und gelten danach wieder.` : ''}${inv.status === 'sent' ? ' Diese Rechnung ist als versendet markiert: Der Kunde hat die bisherige Fassung. Schick ihm nach dem Ändern die neue.' : ''}`,
       confirmLabel: 'Zurück in den Entwurf',
     });
     if (!ok) return;
@@ -238,10 +275,65 @@ export function InvoiceDetailView({ id }) {
     if (rec) { toast(`${inv.number} ist wieder ein Entwurf`, 'good'); navigate(`/invoices/${id}/edit`); }
   }
 
+  async function uncancel() {
+    const ok = await ask({
+      title: `Stornierung von ${inv.number} zurücknehmen?`,
+      text: 'Die Rechnung gilt wieder wie vor dem Storno: Sie zählt wieder zum Umsatz und ist wieder offen.',
+      confirmLabel: 'Stornierung zurücknehmen',
+    });
+    if (!ok) return;
+    const rec = await attempt(() => uncancelInvoice(id));
+    if (rec) toast('Stornierung zurückgenommen', 'good');
+  }
+
+  async function uncredit() {
+    const cn = isCredit ? inv : creditNote;
+    const orig = isCredit ? related : inv;
+    if (!cn) return;
+    const ok = await ask({
+      title: `Gutschrift ${cn.number} zurücknehmen?`,
+      text: `Die Gutschrift wird gelöscht, ihre Nummer wird wieder frei.${orig ? ` Die Rechnung ${orig.number} gilt wieder wie vorher und zählt wieder voll zum Umsatz.` : ''} Im Protokoll bleibt der Vorgang mit der Gutschrift stehen.`,
+      confirmLabel: 'Gutschrift zurücknehmen', danger: true,
+    });
+    if (!ok) return;
+    const res = await attempt(() => removeCreditNote(cn.id));
+    if (!res) return;
+    toast(`Gutschrift ${res.creditNumber} zurückgenommen`, 'good');
+    if (isCredit) navigate(res.invoiceId ? `/invoices/${res.invoiceId}` : '/invoices', { replace: true });
+  }
+
+  async function remove() {
+    if (await removeInvoice(inv)) navigate('/invoices', { replace: true });
+  }
+
+  async function editClarify() {
+    const note = await ask({
+      title: inv.clarify ? 'Klärungsvermerk ändern' : `Klärung zu ${inv.number} vermerken`,
+      text: 'Die Rechnung wird gelb mit „Klärung nötig“ markiert, bis du die Klärung abhakst. Der Vermerk ist intern und erscheint nicht auf dem Beleg.',
+      input: { label: 'Was ist zu klären?', value: inv.clarify ? inv.clarify.note : '', placeholder: 'z. B. Kunde hat 50 $ weniger überwiesen', multiline: true },
+      confirmLabel: 'Vermerk speichern',
+    });
+    if (note === null) return;
+    const rec = await attempt(() => setClarification(id, note));
+    if (rec) toast('Klärung vermerkt', 'good');
+  }
+
+  async function resolveClarify() {
+    const result = await ask({
+      title: 'Klärung erledigt?',
+      text: `Der Vermerk „${inv.clarify.note}“ wird entfernt.${open > 0 ? ` Offen bleiben ${money(open, inv.currency)}, bis eine Zahlung dafür eingetragen ist.` : ''}`,
+      input: { label: 'Ergebnis (optional, steht im Verlauf)', placeholder: 'z. B. Kunde überweist den Rest', multiline: false },
+      confirmLabel: 'Als geklärt abhaken',
+    });
+    if (result === null) return;
+    const rec = await attempt(() => resolveClarification(id, result));
+    if (rec) toast('Klärung erledigt', 'good');
+  }
+
   async function credit() {
     const reason = await ask({
       title: `Gutschrift zu ${inv.number} erstellen?`,
-      text: `Es entsteht ein eigener Beleg über ${money(-inv.totals.totalCents, inv.currency)} mit eigener Nummer. Die Rechnung gilt danach als ausgeglichen. Das lässt sich nicht rückgängig machen.${paid > 0 ? ` Zu dieser Rechnung sind bereits ${money(paid, inv.currency)} eingegangen – eine Rückzahlung trägst du danach als Erstattung ein.` : ''}`,
+      text: `Es entsteht ein eigener Beleg über ${money(-inv.totals.totalCents, inv.currency)} mit eigener Nummer. Die Rechnung gilt danach als ausgeglichen. Du kannst die Gutschrift später zurücknehmen.${paid > 0 ? ` Zu dieser Rechnung sind bereits ${money(paid, inv.currency)} eingegangen – eine Rückzahlung trägst du danach als Erstattung ein.` : ''}`,
       input: { label: 'Text auf der Gutschrift (optional)', placeholder: 'z. B. Grund der Gutschrift', multiline: true },
       confirmLabel: 'Gutschrift erstellen', danger: true,
     });
@@ -279,13 +371,24 @@ export function InvoiceDetailView({ id }) {
         !isCredit && inv.status === 'sent' && { label: 'Versand zurücknehmen', icon: 'undo', onClick: () => attempt(() => markInvoiceSent(id, false)) },
         !isCredit && open > 0 && status !== 'overdue' && { label: 'Zahlungserinnerung', icon: 'clock', onClick: () => setModal('reminder') },
         canVoid && { label: 'Zurück in den Entwurf', icon: 'edit', onClick: reopen },
+        !isCredit && { label: inv.clarify ? 'Klärungsvermerk ändern' : 'Klärung vermerken', icon: 'warn', onClick: editClarify },
         !isCredit && { label: 'Als neue Rechnung kopieren', icon: 'copy', onClick: () => navigate(`/invoices/new?copy=${id}`) },
+        inv.status === 'cancelled' && { label: 'Stornierung zurücknehmen', icon: 'undo', onClick: uncancel },
+        (isCredit || (inv.status === 'credited' && creditNote)) && { label: 'Gutschrift zurücknehmen', icon: 'undo', danger: isCredit, onClick: uncredit },
         canVoid && { label: 'Gutschrift erstellen', icon: 'undo', danger: true, onClick: credit },
         canVoid && { label: 'Stornieren', icon: 'x', danger: true, onClick: cancel },
+        !isCredit && { label: 'Rechnung löschen', icon: 'trash', danger: true, onClick: remove },
       ]} />
     <//>
 
-    ${inv.status === 'cancelled' && html`<${Notice} tone="warn">
+    ${inv.clarify && html`<${Notice} tone="warn" action=${html`<div class="notice-actions">
+        <${Button} small onClick=${editClarify}>Ändern<//>
+        <${Button} small variant="primary" icon="check" onClick=${resolveClarify}>Geklärt<//>
+      </div>`}>
+      <strong>Klärung nötig:</strong> ${inv.clarify.note}
+      <div class="notice-sub">Vermerkt am ${dateTime(inv.clarify.at)} · ${open > 0 ? `offen sind ${money(open, inv.currency)}` : 'kein Betrag mehr offen'}</div>
+    <//>`}
+    ${inv.status === 'cancelled' && html`<${Notice} tone="warn" action=${html`<${Button} small icon="undo" onClick=${uncancel}>Zurücknehmen<//>`}>
       Diese Rechnung wurde am ${dateTime(inv.cancelledAt)} storniert${inv.cancelReason ? ` (${inv.cancelReason})` : ''}. Sie zählt nicht zum Umsatz.
     <//>`}
     ${creditNote && html`<${Notice} tone="info" action=${html`<${Button} small onClick=${() => navigate(`/invoices/${creditNote.id}`)}>Gutschrift öffnen<//>`}>
@@ -323,7 +426,10 @@ export function InvoiceDetailView({ id }) {
                 ${payments.map((p) => html`<li class="row-between" key=${p.id}>
                   <span><span class="strong">${money(p.amountCents, inv.currency)}</span>
                     <span class="cell-sub">${p.amountCents < 0 ? 'Erstattung, ' : ''}${date(p.date)}${p.method ? `, ${p.method}` : ''}${p.note ? ` – ${p.note}` : ''}</span></span>
-                  <${Button} variant="ghost" small icon="trash" title="Zahlung löschen" onClick=${() => removePayment(p)} />
+                  <span class="row-actions">
+                    <${Button} variant="ghost" small icon="edit" title=${p.amountCents < 0 ? 'Erstattung ändern' : 'Zahlung ändern'} onClick=${() => setModal({ edit: p })} />
+                    <${Button} variant="ghost" small icon="trash" title=${p.amountCents < 0 ? 'Erstattung löschen' : 'Zahlung löschen'} onClick=${() => removePayment(p)} />
+                  </span>
                 </li>`)}
               </ul>`
             : html`<p class="muted-text">Noch keine Zahlung eingetragen.</p>`}
@@ -356,6 +462,7 @@ export function InvoiceDetailView({ id }) {
 
     ${modal === 'payment' && html`<${PaymentModal} inv=${inv} onClose=${() => setModal(null)} />`}
     ${modal === 'refund' && html`<${PaymentModal} inv=${inv} refund onClose=${() => setModal(null)} />`}
+    ${modal && modal.edit && html`<${PaymentModal} inv=${inv} payment=${modal.edit} onClose=${() => setModal(null)} />`}
     ${modal === 'send' && html`<${SendModal} doc=${inv} coll="invoices" mode="send" onClose=${() => setModal(null)} />`}
     ${modal === 'reminder' && html`<${SendModal} doc=${inv} coll="invoices" mode="reminder" onClose=${() => setModal(null)} />`}
   `;

@@ -345,9 +345,14 @@ export function Modal({ title, onClose, children, footer, size = 'md', onSubmit 
 /** Host für ask()-Rückfragen. */
 export function DialogHost() {
   const d = useDialog();
-  const [text, setText] = useState('');
-  useEffect(() => { setText(d && d.input ? (d.input.value || '') : ''); }, [d]);
   if (!d) return null;
+  // Eigene Komponente je Rückfrage: Das Eingabefeld startet sofort mit seinem Vorgabewert,
+  // statt ihn nachträglich zu setzen (dabei konnte schnell Getipptes verloren gehen).
+  return html`<${DialogBox} key=${d.id} d=${d} />`;
+}
+
+function DialogBox({ d }) {
+  const [text, setText] = useState(d.input ? (d.input.value || '') : '');
   const cancel = () => d.resolve(d.input ? null : false);
   const ok = () => d.resolve(d.input ? text : true);
   return html`<${Modal} title=${d.title} onClose=${cancel} size="sm" onSubmit=${ok}

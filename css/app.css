@@ -485,6 +485,16 @@ a.cell-main:hover { text-decoration: underline; }
 .timeline-when { font-size: 12.5px; color: var(--muted); }
 .timeline-extra { margin-top: 6px; }
 
+/* Klärung nötig: gelbe Marke neben dem Status, gelber Rand an der Tabellenzeile */
+.badges { display: inline-flex; flex-wrap: wrap; gap: 4px; }
+.table tr.row-clarify td:first-child { box-shadow: inset 3px 0 0 var(--warn-mark); }
+.notice-actions { display: flex; flex: none; gap: 6px; }
+.notice-sub { margin-top: 2px; font-size: 12.5px; color: var(--muted); }
+.pay-rest { margin-top: 14px; padding: 12px 14px; border-radius: var(--r-s); background: var(--warn-bg); }
+.pay-rest-line { margin-bottom: 8px; color: var(--warn); }
+.pay-rest .field { margin-top: 10px; }
+.row-actions { display: inline-flex; flex: none; gap: 2px; }
+
 /* ---------- Editor ---------- */
 
 .editor { display: grid; grid-template-columns: minmax(0, 1.22fr) minmax(0, 1fr); gap: 22px; align-items: start; }

@@ -45,8 +45,13 @@ Backup-Dateien nie ins Repository legen – `.gitignore` schließt sie vorsorgli
 
 - **Company Switcher** oben links: bestimmt Absender, Logo, Nummernkreis, Bank, Texte und Standards neuer Belege und filtert alle Listen und Zahlen. Das Farbband am oberen Rand zeigt, in welchem Unternehmen man gerade arbeitet.
 - **Rechnung schreiben**: *Neue Rechnung* → Kunde → Leistung → *Rechnung erstellen*. Bis dahin ist alles ein Entwurf. Beim Erstellen werden Nummer, Summen, Wechselkurs sowie Unternehmens- und Kundendaten festgeschrieben. Danach ändert sich der Beleg nicht mehr von selbst – auch nicht, wenn du später Kunden- oder Unternehmensdaten änderst.
-- **Korrigieren mit derselben Nummer**: in der Rechnung unter *Mehr → Zurück in den Entwurf*. Die Rechnung behält ihre Nummer, lässt sich ändern und wird neu erstellt – es wird keine neue Nummer vergeben. Solange sie im Entwurf liegt, zählt sie nicht zum Umsatz und gilt nicht als offen; das Dashboard erinnert daran. Die bisherige Fassung bleibt im Verlauf der Rechnung als PDF abrufbar. Nicht möglich, solange Zahlungen eingetragen sind, und nicht bei stornierten oder gutgeschriebenen Rechnungen. Ein solcher Entwurf lässt sich nicht löschen und nicht einem anderen Unternehmen zuordnen, damit keine Nummer verloren geht.
-- **Korrigieren mit neuer Nummer**: stornieren (ohne Zahlungen) oder Gutschrift erstellen, dann *Als neue Rechnung kopieren*. Ob eine bereits verschickte Rechnung unter derselben Nummer geändert werden darf oder storniert werden muss, hängt von den Regeln ab, die für das jeweilige Unternehmen gelten – das Tool lässt beides zu und schreibt nichts davon vor.
+- **Korrigieren mit derselben Nummer**: in der Rechnung unter *Mehr → Zurück in den Entwurf*. Die Rechnung behält ihre Nummer, lässt sich ändern und wird neu erstellt – es wird keine neue Nummer vergeben. Eingetragene Zahlungen bleiben erhalten. Solange sie im Entwurf liegt, zählt sie nicht zum Umsatz und gilt nicht als offen; das Dashboard erinnert daran. Die bisherige Fassung bleibt im Verlauf der Rechnung als PDF abrufbar.
+- **Zahlungen berichtigen**: Stift-Symbol an der Zahlung (Datum, Betrag, Zahlungsart, Notiz) oder Papierkorb zum Löschen.
+- **Minderzahlung**: Trägst du weniger ein, als offen ist, lässt sich im selben Dialog „Differenz muss geklärt werden“ ankreuzen. Die Rechnung trägt dann gelb „Klärung nötig“ – in der Rechnung, in der Liste (eigener Filter) und im Dashboard –, bis du die Klärung abhakst. Der Vermerk lässt sich auch ohne Zahlung über *Mehr → Klärung vermerken* setzen.
+- **Zurücknehmen**: *Mehr → Stornierung zurücknehmen* und *Mehr → Gutschrift zurücknehmen*. Die Rechnung gilt danach wieder wie vorher; die Gutschrift wird gelöscht und ihre Nummer frei. Eine Erstattung muss vorher entfernt werden.
+- **Rechnung löschen**: *Mehr → Rechnung löschen* entfernt die Rechnung vollständig – samt Zahlungen, Erinnerungen und Gutschrift – aus allen Listen und Auswertungen. Ihre Nummer wird wieder frei und als nächste vergeben; bereits vergebene höhere Nummern bleiben unverändert. Im Protokoll bleibt der Vorgang mit der letzten Fassung (als PDF abrufbar) stehen.
+- **Korrigieren mit neuer Nummer**: stornieren (ohne Zahlungen) oder Gutschrift erstellen, dann *Als neue Rechnung kopieren*.
+- Ob eine bereits verschickte Rechnung geändert oder gelöscht werden darf oder storniert werden muss, hängt von den Regeln ab, die für das jeweilige Unternehmen gelten. Das Tool lässt alle Wege zu und schreibt keinen davon vor.
 - **Belege**: unter *Ausgaben* Fotos oder PDFs hineinziehen. Sie landen unter *Zu prüfen*, werden ausgelesen und erst nach deiner Bestätigung gebucht.
 - **Wiederkehrend**: Vorlage mit Intervall anlegen; fällige Vorlagen erscheinen im Dashboard und erzeugen per Klick einen Rechnungsentwurf.
 - **Zahlungserinnerungen**: überfällige Rechnungen zeigen die fällige Stufe (Tage und Texte in *Einstellungen*).
@@ -137,13 +142,14 @@ Positionen liegen im Beleg (`items`), weil ein Beleg immer als Ganzes gelesen un
 node --test tests/core.test.mjs tests/reports.test.mjs
 ```
 
-32 Tests für Geldrechnung, Nummernkreise, Status, Datumsrechnung, Auswertungen, Kursquellen, Belegerkennung, Export und Backup-Prüfung. Die Abläufe im Browser (Rechnung von der Eingabe bis zur PDF, zurück in den Entwurf und neu erstellen, Angebot → Rechnung, Storno, Gutschrift, Belege, Backup und Wiederherstellung, zwei Tabs gleichzeitig) wurden mit einem ferngesteuerten Chromium durchgespielt – über einen Webserver und direkt von der Festplatte geöffnet. In Safari wurde nicht getestet.
+32 Tests für Geldrechnung, Nummernkreise, Status, Datumsrechnung, Auswertungen, Kursquellen, Belegerkennung, Export und Backup-Prüfung. Die Abläufe im Browser (Rechnung von der Eingabe bis zur PDF, zurück in den Entwurf und neu erstellen, Zahlungen berichtigen, Klärungsvermerk, Storno und Gutschrift zurücknehmen, Rechnung löschen mit Freigabe der Nummer, Angebot → Rechnung, Storno, Gutschrift, Belege, Backup und Wiederherstellung, zwei Tabs gleichzeitig) wurden mit einem ferngesteuerten Chromium durchgespielt – über einen Webserver und direkt von der Festplatte geöffnet. In Safari wurde nicht getestet.
 
 ## Grenzen dieser Version
 
 - Kein Login, keine Rollen, kein Steuerberater-Zugang, keine gemeinsamen Daten über Geräte hinweg.
 - Kein E-Mail-Versand aus dem Tool, keine automatischen Erinnerungen, kein automatisches Anlegen wiederkehrender Rechnungen – das Tool zeigt, was fällig ist, ausgelöst wird per Klick.
 - Gutschriften nur über den vollen Rechnungsbetrag.
+- Eine offene Differenz lässt sich vermerken, aber nicht ausbuchen: Die Rechnung bleibt teilbezahlt, bis der Rest als Zahlung eingetragen ist.
 - Die PDF-Schrift kennt lateinische, griechische und kyrillische Zeichen. Andere Schriften blockieren das Erstellen mit einem Hinweis.
 - Die Vorschau zeigt den Beleg als eine fortlaufende Seite; Seitenumbrüche entstehen erst im PDF.
 - iPhone-Fotos im HEIC-Format liest nur Safari. In anderen Browsern vorher als JPG oder PDF exportieren.

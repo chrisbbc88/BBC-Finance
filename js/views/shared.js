@@ -20,7 +20,8 @@ export function statusOf(inv) { return invoiceStatus(inv, paymentsOf(inv.id), to
 export function InvoiceBadge({ inv }) {
   const s = statusOf(inv);
   const def = INVOICE_STATUS[s] || INVOICE_STATUS.draft;
-  return html`<${Badge} tone=${def.tone}>${def.label}<//>`;
+  // „Klärung nötig“ steht gelb neben dem Status – z. B. bezahlt, aber mit offener Differenz.
+  return html`<span class="badges"><${Badge} tone=${def.tone}>${def.label}<//>${inv.clarify && s !== 'draft' && html`<${Badge} tone="warn" icon="warn">Klärung nötig<//>`}</span>`;
 }
 
 export function QuoteBadge({ quote }) {
