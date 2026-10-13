@@ -36,7 +36,7 @@ export function QuotesView() {
 
   const columns = [
     { key: 'number', label: 'Nummer', class: 'nw', sort: (r) => r.quote.number || '', render: (r) => html`<span class="cell-main">${r.quote.number || 'Entwurf'}</span>` },
-    { key: 'customer', label: 'Kunde', sort: (r) => customerLabel(r.quote), render: (r) => customerLabel(r.quote) },
+    { key: 'customer', label: 'Kontakt', sort: (r) => customerLabel(r.quote), render: (r) => customerLabel(r.quote) },
     ...(showCompany ? [{ key: 'company', label: 'Unternehmen', render: (r) => html`<${CompanyTag} id=${r.quote.companyId} />` }] : []),
     { key: 'date', label: 'Datum', sort: (r) => r.quote.issueDate, render: (r) => date(r.quote.issueDate) },
     { key: 'valid', label: 'Gültig bis', sort: (r) => r.quote.validUntil || '', render: (r) => date(r.quote.validUntil) },
@@ -49,7 +49,7 @@ export function QuotesView() {
       <${Button} variant="primary" icon="plus" onClick=${() => navigate('/quotes/new')}>Neues Angebot<//>
     <//>
     ${state.quotes.length > 0 && html`<div class="filters">
-      <${SearchInput} value=${q} onInput=${setQ} placeholder="Nummer, Kunde, Leistung" />
+      <${SearchInput} value=${q} onInput=${setQ} placeholder="Nummer, Kontakt, Leistung" />
       <${Chips} label="Status" value=${group} onChange=${setGroup}
         options=${GROUPS.map((g) => ({ id: g.id, label: g.label, count: scoped.filter((r) => g.test(r.status)).length }))} />
     </div>`}
@@ -134,7 +134,7 @@ export function QuoteDetailView({ id }) {
         <${Panel} title="Stand">
           <${KV} rows=${[
             ['Unternehmen', html`<${CompanyTag} id=${quote.companyId} />`],
-            ['Kunde', html`<a href=${`#/customers/${quote.customerId}`}>${customerLabel(quote)}</a>`],
+            ['Kontakt', html`<a href=${`#/customers/${quote.customerId}`}>${customerLabel(quote)}</a>`],
             ['Angebotssumme', html`<${DocAmount} doc=${quote} />`],
             ['Gültig bis', date(quote.validUntil)],
             ['Erstellt', dateTime(quote.finalizedAt)],

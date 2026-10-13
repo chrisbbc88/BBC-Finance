@@ -9,7 +9,7 @@ import { matches } from '../lib/util.js';
 import { exportCSV } from '../lib/export.js';
 
 const ENTITY = {
-  invoices: 'Rechnungen', quotes: 'Angebote', customers: 'Kunden', services: 'Leistungen',
+  invoices: 'Rechnungen', quotes: 'Angebote', customers: 'Kontakte', services: 'Leistungen',
   expenses: 'Ausgaben', companies: 'Unternehmen', recurring: 'Wiederkehrend', appointments: 'Termine', notes: 'Kundendokumentation', system: 'System',
 };
 

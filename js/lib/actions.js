@@ -3,7 +3,7 @@
 
 import { write, state, byId, all, paymentsOf } from './store.js';
 import {
-  newInvoice, newItem, customerName, INTERVALS, DOC_CURRENCIES,
+  newInvoice, newItem, customerName, INTERVALS, DOC_CURRENCIES, isCustomer,
 } from './schema.js';
 import {
   computeTotals, sumPayments, openCents, invoiceStatus, fxForDoc,
@@ -109,27 +109,54 @@ const stripLarge = (o) => { const c = clone(o); delete c.snapshot; return c; };
 
 /* ---------- Kunden ---------- */
 
-export function nextCustomerNumber() {
-  let max = 0;
-  for (const c of all('customers')) {
-    const m = /^K-(\d+)$/.exec(c.number || '');
-    if (m) max = Math.max(max, Number(m[1]));
-  }
-  return `K-${String(max + 1).padStart(4, '0')}`;
-}
+const NUMBER_PREFIX = { customer: 'K', contact: 'KO' };
+const kindOf = (c) => (isCustomer(c) ? 'customer' : 'contact');
+const autoNumber = (kind, number) => new RegExp(`^${NUMBER_PREFIX[kind]}-\\d+$`).test(String(number || ''));
 
+/** Nächste freie Nummer: Kunden K-0001, K-0002 …, Kontakte KO-0001, KO-0002 … */
+export function nextContactNumber(kind = 'customer', rows = all('customers')) {
+  const prefix = NUMBER_PREFIX[kind] || 'K';
+  const re = new RegExp(`^${prefix}-(\\d+)$`);
+  let max = 0;
+  // Auch frühere Nummern zählen: eine Nummer, die schon einmal jemandem gehörte, wird nicht neu vergeben.
+  for (const c of rows) {
+    for (const n of [c.number, ...(c.formerNumbers || [])]) {
+      const m = re.exec(n || '');
+      if (m) max = Math.max(max, Number(m[1]));
+    }
+  }
+  return `${prefix}-${String(max + 1).padStart(4, '0')}`;
+}
+export const nextCustomerNumber = () => nextContactNumber('customer');
+
+/**
+ * Kontakt bzw. Kunde speichern. Wechselt die Art und hat der Datensatz eine automatisch vergebene Nummer
+ * (K-… bzw. KO-…), bekommt er die nächste Nummer der neuen Art; die bisherige bleibt in `formerNumbers`.
+ * Selbst vergebene Nummern bleiben unverändert.
+ */
 export async function saveCustomer(customer) {
   if (!customerName(customer)) fail('Bitte ein Unternehmen oder einen Namen eintragen.');
   const before = byId('customers', customer.id);
-  const rec = touch({ ...customer });
-  if (!String(rec.number || '').trim()) rec.number = nextCustomerNumber();
+  const rec = touch({ ...customer, kind: kindOf(customer) });
+  const was = before ? kindOf(before) : rec.kind;
+  if (before && was === 'customer' && rec.kind === 'contact' && all('invoices').some((i) => i.customerId === rec.id)) {
+    fail('Für diesen Kunden gibt es Rechnungen. Er bleibt Kunde.');
+  }
+  if (before && was !== rec.kind && autoNumber(was, before.number) && (!String(rec.number || '').trim() || rec.number === before.number)) {
+    rec.formerNumbers = [...(before.formerNumbers || []), before.number];
+    rec.number = '';
+  }
+  if (!String(rec.number || '').trim()) {
+    rec.number = nextContactNumber(rec.kind, [...all('customers').filter((c) => c.id !== rec.id), { formerNumbers: rec.formerNumbers || [] }]);
+  }
   const dup = all('customers').find((c) => c.id !== rec.id && c.number === rec.number);
-  if (dup) fail(`Die Kundennummer ${rec.number} ist bereits vergeben (${customerName(dup)}).`);
+  if (dup) fail(`Die Nummer ${rec.number} ist bereits vergeben (${customerName(dup)}).`);
   const d = diffFields(before, rec, ['updatedAt', 'createdAt']);
+  const label = rec.kind === 'customer' ? 'Kunde' : 'Kontakt';
   await write(async (w) => {
     await w.put('customers', rec);
     await w.audit({
-      action: before ? 'Kunde geändert' : 'Kunde angelegt',
+      action: !before ? `${label} angelegt` : (was !== rec.kind ? (rec.kind === 'customer' ? 'Kontakt zum Kunden gemacht' : 'Kunde als Kontakt geführt') : `${label} geändert`),
       entity: 'customers', entityId: rec.id, label: customerName(rec), prev: before ? d.prev : null, next: d.next,
     });
   });
@@ -561,7 +588,23 @@ export async function finalizeInvoice(draft) {
     rec.status = 'issued';
     rec.finalizedAt = nowISO();
     rec.sentAt = null;
-    rec.snapshot = snapshotOf(company, customer);
+    // Eine Rechnung geht immer an einen Kunden: Ein Kontakt wird mit seiner ersten Rechnung zum Kunden.
+    let billTo = (await w.get('customers', rec.customerId)) || customer;
+    if (!isCustomer(billTo)) {
+      const former = billTo.number;
+      const converted = touch({ ...billTo, kind: 'customer' });
+      if (autoNumber('contact', former)) {
+        converted.formerNumbers = [...(billTo.formerNumbers || []), former];
+        converted.number = nextContactNumber('customer', [...all('customers').filter((c) => c.id !== billTo.id), { formerNumbers: converted.formerNumbers }]);
+      }
+      await w.put('customers', converted);
+      await w.audit({
+        action: 'Kontakt zum Kunden gemacht', entity: 'customers', entityId: converted.id, label: customerName(converted),
+        prev: { kind: 'contact', number: former }, next: { kind: 'customer', number: converted.number, reason: 'Erste Rechnung' },
+      });
+      billTo = converted;
+    }
+    rec.snapshot = snapshotOf(company, billTo);
     if (again) {
       rec.revision = (Number(rec.revision) || 0) + 1;
       delete rec.reopened;

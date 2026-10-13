@@ -66,6 +66,8 @@ Backup-Dateien nie ins Repository legen – `.gitignore` schließt sie vorsorgli
 - Ob eine bereits verschickte Rechnung geändert oder gelöscht werden darf oder storniert werden muss, hängt von den Regeln ab, die für das jeweilige Unternehmen gelten. Das Tool lässt alle Wege zu und schreibt keinen davon vor.
 - **Belege**: unter *Ausgaben* Fotos oder PDFs hineinziehen. Sie landen unter *Zu prüfen*, werden ausgelesen und erst nach deiner Bestätigung gebucht.
 - **Anzeigewährung**: Der Umschalter **USD | EUR** oben rechts stellt Dashboard, Finanzübersicht, Reports, Kunden- und Listensummen auf die gewählte Währung um; die andere steht als Zweitwert daneben. Jeder Beleg wird dabei mit seinem eigenen, gespeicherten Kurs umgerechnet. Belege selbst bleiben in ihrer Währung.
+- **Kontakte**: Unter *Kontakte* stehen Kunden (Nummer K-…) und Kontakte (Nummer KO-…, z. B. Interessenten). Kontakte bekommen Termine, Notizen und Angebote; mit der ersten Rechnung werden sie automatisch Kunde und erhalten eine K-Nummer (die KO-Nummer bleibt als frühere Nummer vermerkt und wird nie neu vergeben). Umstellen geht auch von Hand (*Mehr → Zum Kunden machen* bzw. *Als Kontakt führen*, Letzteres nur ohne Rechnungen). Selbst vergebene Nummern bleiben beim Umstellen erhalten. Auf Belegen steht die Nummer nur bei Kunden.
+- **Impressum übernehmen**: im Kontaktformular *Daten aus Impressum übernehmen*. Eingefügter Text wird direkt im Browser ausgelesen (Firma, Ansprechpartner, Anschrift, Telefon, E-Mail, Website, Steuernummer, USt-IdNr., Registerangabe in die Notizen); mit API-Key übernimmt das die KI genauer. Mit API-Key lässt sich auch die Adresse des Impressums eintragen – die Seite wird dann über die Anthropic-API abgerufen, weil der Browser fremde Seiten nicht lesen darf. Es werden nur leere Felder gefüllt.
 - **Leistungsübersicht beim Kunden**: entsteht automatisch aus den erstellten Rechnungen (Gutschriften abgezogen) und aus aktiven wiederkehrenden Vorlagen („läuft, monatlich“). In der Kundenliste zeigt die Spalte *Leistungen* die wichtigsten; die Suche findet Kunden auch über ihre Leistungen.
 - **Kundendokumentation**: im Kundenprofil unter *Termine und Dokumentation* – Notizen, Telefonate, E-Mails, Gespräche, Aufgaben mit Datum und optional dem Unternehmen. Abgeschlossene Termine erscheinen dort mit ihrem Ergebnis.
 - **Termine**: unter *Termine* (Kalender und Liste) oder beim Kunden über *Termin planen*. Das gewählte Unternehmen bestimmt Meeting-Dienst, Link, Zugangsdaten, Zeitzone und Absender – einzutragen unter *Unternehmen → Termine und Meetings*. Nach dem Anlegen erscheint die Einladung: Text (Vorlage unter *Einstellungen*, Deutsch oder Englisch je nach Kunde), Kalenderdatei (.ics) mit Datum, Uhrzeit, Link und Text, Übergabe an das E-Mail-Programm. Nach dem Termin: *Termin dokumentieren*.
@@ -130,7 +132,7 @@ Jede Sammlung ist ein IndexedDB-Store und entspricht einer Tabelle. Bei einem sp
 |---|---|---|
 | `companies` | Unternehmensprofile: Absender, Branding, Bank, Nummernmuster, Standards, Texte | – |
 | `assets` | Logos, über ihren Inhalt adressiert | ← `companies.logoAssetId` |
-| `customers` | Kunden, unternehmensübergreifend | – |
+| `customers` | Kontakte, unternehmensübergreifend: Kunden (`kind: 'customer'`, auch ohne Feld) und Kontakte (`kind: 'contact'`) | – |
 | `services` | Leistungskatalog, optional auf ein Unternehmen beschränkt | → `companies` (optional) |
 | `invoices` | Rechnungen und Gutschriften mit Positionen, Summen, Kurs, Momentaufnahme | → `companies` (genau eines), → `customers`, → `quotes`, → `recurring`, → `invoices` (Gutschrift ↔ Rechnung) |
 | `quotes` | Angebote, gleicher Aufbau | → `companies`, → `customers`, → `invoices` |
@@ -158,10 +160,10 @@ Positionen liegen im Beleg (`items`), weil ein Beleg immer als Ganzes gelesen un
 ## Tests
 
 ```
-node --test tests/core.test.mjs tests/reports.test.mjs
+node --test tests/core.test.mjs tests/reports.test.mjs tests/imprint.test.mjs
 ```
 
-32 Tests für Geldrechnung, Nummernkreise, Status, Datumsrechnung, Auswertungen, Kursquellen, Belegerkennung, Export und Backup-Prüfung. Die Abläufe im Browser (Rechnung von der Eingabe bis zur PDF, zurück in den Entwurf und neu erstellen, Zahlungen berichtigen, Klärungsvermerk, Storno und Gutschrift zurücknehmen, Rechnung löschen mit Freigabe der Nummer, Termine mit Einladung und Kalenderdatei, Kundendokumentation, Leistungsübersicht, Währungsumschalter, Update einer bestehenden Datenbank ohne Datenverlust, Angebot → Rechnung, Storno, Gutschrift, Belege, Backup und Wiederherstellung, zwei Tabs gleichzeitig) wurden mit einem ferngesteuerten Chromium durchgespielt – über einen Webserver und direkt von der Festplatte geöffnet. In Safari wurde nicht getestet.
+42 Tests für Geldrechnung, Impressum-Erkennung, Nummernkreise, Status, Datumsrechnung, Auswertungen, Kursquellen, Belegerkennung, Export und Backup-Prüfung. Die Abläufe im Browser (Rechnung von der Eingabe bis zur PDF, zurück in den Entwurf und neu erstellen, Zahlungen berichtigen, Klärungsvermerk, Storno und Gutschrift zurücknehmen, Rechnung löschen mit Freigabe der Nummer, Termine mit Einladung und Kalenderdatei, Kundendokumentation, Leistungsübersicht, Währungsumschalter, Update einer bestehenden Datenbank ohne Datenverlust, Angebot → Rechnung, Storno, Gutschrift, Belege, Backup und Wiederherstellung, zwei Tabs gleichzeitig) wurden mit einem ferngesteuerten Chromium durchgespielt – über einen Webserver und direkt von der Festplatte geöffnet. In Safari wurde nicht getestet.
 
 ## Grenzen dieser Version
 

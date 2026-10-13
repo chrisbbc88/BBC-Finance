@@ -7,7 +7,9 @@ import { uid, nowISO, todayISO } from './util.js';
 export const SCHEMA_VERSION = 2;
 export const DB_NAME = 'bbc-finance';
 /** Stand der Anwendung – nach einem Update meldet das Tool einmal, dass alle Daten übernommen wurden. */
-export const APP_VERSION = '2026-10-13';
+export const APP_VERSION = '2026-10-13b';
+/** Kurzer Hinweis auf die Neuerungen dieser Fassung (erscheint einmal nach dem Update). */
+export const APP_NEWS = 'Neu: Kontakte statt Kunden (Kunde K / Kontakt KO) und Kontaktdaten aus dem Impressum übernehmen.';
 
 /** Sammlungen, die vollständig im Arbeitsspeicher gehalten werden. */
 export const COLLECTIONS = [
@@ -264,9 +266,21 @@ export function newNote(over = {}) {
   };
 }
 
+/**
+ * Kontakte: Ein Datensatz in der Sammlung `customers` ist entweder ein Kunde (kind 'customer', Nummer K-…)
+ * oder ein Kontakt (kind 'contact', Nummer KO-…). Ältere Datensätze ohne `kind` sind Kunden.
+ */
+export const CONTACT_KINDS = [
+  { id: 'customer', label: 'Kunde' },
+  { id: 'contact', label: 'Kontakt' },
+];
+export const isCustomer = (c) => !c || c.kind !== 'contact';
+export const contactKindLabel = (c) => (isCustomer(c) ? 'Kunde' : 'Kontakt');
+
 export function newCustomer(over = {}) {
   return {
     ...stamp(),
+    kind: 'customer',
     number: '',
     company: '', contact: '', firstName: '', lastName: '',
     street: '', houseNo: '', zip: '', city: '', region: '', country: '',

@@ -76,7 +76,8 @@ export function buildDocModel(doc, coll, opts = {}) {
   }
   if (kind === 'invoice' && doc.dueDate) meta.push([L.dueDate, date(doc.dueDate, lang)]);
   if (kind === 'quote' && doc.validUntil) meta.push([L.validUntil, date(doc.validUntil, lang)]);
-  if (customer && customer.number) meta.push([L.customerNo, customer.number]);
+  // Die Kundennummer steht nur bei Kunden auf dem Beleg – nicht bei Kontakten (z. B. im Angebot an einen Interessenten).
+  if (customer && customer.number && customer.kind !== 'contact') meta.push([L.customerNo, customer.number]);
 
   let subtitle = '';
   if (kind === 'credit_note' && doc.relatedInvoiceId) {

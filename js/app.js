@@ -11,7 +11,7 @@ import {
   state, load, byId, activeCompanies, currentCompany, setSetting, assetUrl,
 } from './lib/store.js';
 import { firstRun } from './lib/seed.js';
-import { customerName, APP_VERSION } from './lib/schema.js';
+import { customerName, APP_VERSION, APP_NEWS } from './lib/schema.js';
 import { matches, parseNum, norm } from './lib/util.js';
 import { money } from './lib/format.js';
 
@@ -37,7 +37,7 @@ const NAV = [
     { path: '/recurring', label: 'Wiederkehrend', icon: 'repeat' },
   ],
   [
-    { path: '/customers', label: 'Kunden', icon: 'customers' },
+    { path: '/customers', label: 'Kontakte', icon: 'customers' },
     { path: '/appointments', label: 'Termine', icon: 'calendar' },
     { path: '/services', label: 'Leistungen', icon: 'services' },
   ],
@@ -108,7 +108,7 @@ function amountHit(q, cents) {
 function searchAll(q) {
   const out = [];
   const add = (group, items) => { if (items.length) out.push({ group, items: items.slice(0, 5) }); };
-  add('Kunden', state.customers
+  add('Kontakte', state.customers
     .filter((c) => matches(q, c.number, c.company, c.firstName, c.lastName, c.contact, c.email, c.city))
     .map((c) => ({ key: c.id, label: customerName(c), sub: [c.number, c.city].filter(Boolean).join(', '), href: `/customers/${c.id}` })));
   const custName = (d) => customerName(byId('customers', d.customerId) || (d.snapshot && d.snapshot.customer));
@@ -175,7 +175,7 @@ function GlobalSearch() {
   let idx = -1;
   return html`<div class="gsearch" ref=${ref} role="search">
     <${Icon} name="search" size=${17} />
-    <input ref=${inputRef} class="gsearch-input" type="search" placeholder="Suchen: Kunde, Rechnungsnummer, Betrag, Leistung"
+    <input ref=${inputRef} class="gsearch-input" type="search" placeholder="Suchen: Kontakt, Rechnungsnummer, Betrag, Leistung"
       aria-label="Globale Suche" value=${q}
       onInput=${(e) => { setQ(e.target.value); setOpen(true); setActive(0); }}
       onFocus=${() => setOpen(true)} onKeyDown=${onKey} />
@@ -407,7 +407,7 @@ async function announceUpdate() {
   const hasData = n.invoices + n.customers + n.expenses + n.quotes > 0;
   try { await setSetting('appVersion', APP_VERSION); } catch (_) { /* nicht kritisch */ }
   if (hasData && !state.settings.demoLoaded) {
-    toast(`BBC Finance wurde aktualisiert. Alle Daten sind übernommen: ${n.invoices} Rechnungen, ${n.quotes} Angebote, ${n.customers} Kunden, ${n.expenses} Ausgaben. Neu: Termine, Kundendokumentation, Leistungsübersicht und der USD/EUR-Umschalter oben rechts.`, 'good', 15000);
+    toast(`BBC Finance wurde aktualisiert. Alle Daten sind übernommen: ${n.invoices} Rechnungen, ${n.quotes} Angebote, ${n.customers} Kontakte, ${n.expenses} Ausgaben. ${APP_NEWS}`, 'good', 15000);
   }
 }
 

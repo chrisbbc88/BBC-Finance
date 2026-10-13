@@ -66,7 +66,7 @@ export function AppointmentModal({ appointment, onClose }) {
   const customerOptions = state.customers
     .filter((c) => c.active !== false || c.id === a.customerId)
     .sort((x, y) => customerName(x).localeCompare(customerName(y), 'de'))
-    .map((c) => ({ id: c.id, label: customerName(c), sub: [c.number, c.city].filter(Boolean).join(', '), search: `${c.firstName} ${c.lastName} ${c.contact} ${c.email}` }));
+    .map((c) => ({ id: c.id, label: customerName(c), sub: [c.kind === 'contact' ? 'Kontakt' : 'Kunde', c.number, c.city].filter(Boolean).join(', '), search: `${c.firstName} ${c.lastName} ${c.contact} ${c.email}` }));
 
   function pickCompany(id) {
     const next = byId('companies', id);
@@ -148,9 +148,9 @@ export function AppointmentModal({ appointment, onClose }) {
       <${SelectField} class="span-2" label="Über Unternehmen" value=${a.companyId} onChange=${pickCompany}
         placeholder="Unternehmen wählen" options=${companies.map((c) => ({ id: c.id, label: c.name }))}
         hint="Bestimmt Meeting-Link und Absender" />
-      <${Field} class="span-2" label="Kunde" htmlFor="appt-customer">
-        <${Combobox} id="appt-customer" options=${customerOptions} value=${a.customerId} placeholder="Kunde suchen (optional)"
-          onChange=${pickCustomer} onCreate=${(text) => setNewCustomer({ company: text })} createLabel="als Kunde anlegen" />
+      <${Field} class="span-2" label="Kontakt" htmlFor="appt-customer">
+        <${Combobox} id="appt-customer" options=${customerOptions} value=${a.customerId} placeholder="Kontakt suchen (optional)"
+          onChange=${pickCustomer} onCreate=${(text) => setNewCustomer({ company: text, kind: 'contact' })} createLabel="als Kontakt anlegen" />
       <//>
       <${TextField} class="span-2" label="Gesprächspartner" value=${a.contactName} onInput=${set('contactName')}
         placeholder=${cust ? (customerPerson(cust) || customerName(cust)) : 'Name'} hint="Für die Anrede in der Einladung" />
@@ -369,7 +369,7 @@ export function AppointmentsView({ params }) {
       ${(showPast ? past : upcoming).length
         ? html`<${AppointmentList} items=${showPast ? past : upcoming} onOpen=${setEditing} showCustomer />`
         : html`<${EmptyState} icon="calendar" title=${showPast ? 'Keine vergangenen Termine' : 'Keine anstehenden Termine'}
-            text="Termine legst du hier oder direkt beim Kunden an.">
+            text="Termine legst du hier oder direkt beim Kontakt an.">
             <${Button} variant="primary" icon="plus" onClick=${() => create(today)}>Termin anlegen<//>
           <//>`}
     `}

@@ -791,3 +791,6 @@ a.cell-main:hover { text-decoration: underline; }
   .switcher-text { overflow: hidden; }
   .topbar-actions { gap: 6px; }
 }
+.imprint-open { margin-bottom: 14px; }
+.imprint-box { margin-bottom: 16px; padding: 12px 14px 14px; border-radius: var(--r-s); background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--line); }
+.imprint-box .form-grid { margin-top: 8px; }

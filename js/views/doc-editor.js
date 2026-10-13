@@ -13,11 +13,11 @@ import { DocSheet } from '../ui/docview.js';
 import { state, byId, activeCompanies, currentCompany, paymentsOf } from '../lib/store.js';
 import { removeInvoice } from './invoice-actions.js';
 import {
-  newInvoice, newQuote, newItem, customerName, LANGUAGES, DOC_CURRENCIES, UNITS, newCustomer, newService,
+  newInvoice, newQuote, newItem, customerName, LANGUAGES, DOC_CURRENCIES, UNITS, newCustomer, newService, isCustomer,
 } from '../lib/schema.js';
 import {
   saveInvoiceDraft, finalizeInvoice, deleteInvoiceDraft, saveQuoteDraft, finalizeQuote, deleteQuote,
-  itemFromService, dueDateOf, validateDoc, peekNumber, duplicateAsDraft,
+  itemFromService, dueDateOf, validateDoc, peekNumber, duplicateAsDraft, nextContactNumber,
 } from '../lib/actions.js';
 import { computeTotals, convertCents, fxForDoc, lineTotalCents, sumPayments } from '../lib/calc.js';
 import { fxFor, lastKnownRate, wantedRateDate } from '../lib/fx.js';
@@ -279,8 +279,8 @@ export function DocEditorView({ coll, id, params }) {
 
   const customerOptions = state.customers
     .filter((c) => c.active !== false || c.id === doc.customerId)
-    .sort((a, b) => customerName(a).localeCompare(customerName(b), 'de'))
-    .map((c) => ({ id: c.id, label: customerName(c), sub: [c.number, c.city].filter(Boolean).join(', '), search: `${c.firstName} ${c.lastName} ${c.contact} ${c.email}` }));
+    .sort((a, b) => (Number(!isCustomer(a)) - Number(!isCustomer(b))) || customerName(a).localeCompare(customerName(b), 'de'))
+    .map((c) => ({ id: c.id, label: customerName(c), sub: [isCustomer(c) ? '' : 'Kontakt', c.number, c.city].filter(Boolean).join(', '), search: `${c.firstName} ${c.lastName} ${c.contact} ${c.email}` }));
 
   function pickCompany(cid) {
     const next = byId('companies', cid);
@@ -378,6 +378,8 @@ export function DocEditorView({ coll, id, params }) {
       list: [
         `${customerName(customer)}`,
         `${money(totals.totalCents, doc.currency)}${secondary != null ? ` (≈ ${money(secondary, other)})` : ''}`,
+        ...(coll === 'invoices' && customer && !isCustomer(customer)
+          ? [`${customerName(customer)} ist bisher Kontakt und wird damit Kunde (neue Nummer ${nextContactNumber('customer')}).`] : []),
         ...(paidAlready > 0 ? [paidAlready > totals.totalCents
           ? `Achtung: Eingegangen sind bereits ${money(paidAlready, doc.currency)} – mehr als der neue Betrag. Bitte danach die Zahlung berichtigen.`
           : `Bereits eingegangen: ${money(paidAlready, doc.currency)}`] : []),
@@ -435,17 +437,17 @@ export function DocEditorView({ coll, id, params }) {
 
     <div class=${`editor${showPreview ? ' show-preview' : ''}`}>
       <div class="editor-form">
-        <${Panel} title="Aussteller und Kunde">
+        <${Panel} title=${coll === 'quotes' ? 'Aussteller und Empfänger' : 'Aussteller und Kunde'}>
           <div class="form-grid">
             <${SelectField} class="span-3" label="Unternehmen" value=${doc.companyId} onChange=${pickCompany}
               disabled=${!!reserved} hint=${reserved ? 'Gehört zur Rechnungsnummer und lässt sich nicht mehr wechseln.' : ''}
               placeholder=${companies.length ? 'Unternehmen wählen' : 'Noch kein Unternehmen angelegt'}
               options=${(reserved && company && !companies.some((c) => c.id === company.id) ? [company, ...companies] : companies).map((c) => ({ id: c.id, label: c.name }))} />
-            <${Field} class="span-3" label="Kunde" htmlFor="doc-customer">
-              <${Combobox} id="doc-customer" options=${customerOptions} value=${doc.customerId} placeholder="Kunde suchen"
+            <${Field} class="span-3" label=${coll === 'quotes' ? 'Kontakt oder Kunde' : 'Kunde'} htmlFor="doc-customer">
+              <${Combobox} id="doc-customer" options=${customerOptions} value=${doc.customerId} placeholder=${coll === 'quotes' ? 'Kontakt suchen' : 'Kunde suchen'}
                 autoFocus=${!!doc.companyId && !doc.customerId}
                 onChange=${pickCustomer}
-                onCreate=${(text) => setModal({ type: 'customer', seed: text })} createLabel="als Kunde anlegen" />
+                onCreate=${(text) => setModal({ type: 'customer', seed: text })} createLabel=${coll === 'quotes' ? 'als Kontakt anlegen' : 'als Kunde anlegen'} />
             <//>
             <${DateField} class="span-2" label=${K.dateLabel} value=${doc.issueDate} onInput=${set('issueDate')} />
             ${coll === 'invoices' && html`
@@ -536,7 +538,7 @@ export function DocEditorView({ coll, id, params }) {
     </div>
 
     ${modal && modal.type === 'customer' && html`<${CustomerFormModal}
-      customer=${newCustomer({ company: modal.seed || '' })} onClose=${() => setModal(null)}
+      customer=${newCustomer({ company: modal.seed || '', kind: coll === 'quotes' ? 'contact' : 'customer' })} onClose=${() => setModal(null)}
       onSaved=${(c) => setDoc((d) => customerDefaults(d, c, byId('companies', d.companyId), coll))} />`}
     ${modal && modal.type === 'service' && html`<${ServiceFormModal}
       service=${newService({ companyId: '', currency: doc.currency })} onClose=${() => setModal(null)}

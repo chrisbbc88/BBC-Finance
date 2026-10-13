@@ -138,7 +138,7 @@ export function dashboardKpis(data, companyId, today) {
   const paid = invoicesOnly.filter((d) => invoiceStatus(d.inv, pidx.get(d.inv.id) || [], today) === 'paid');
 
   // Aktive Kunden: als aktiv markiert; mit Unternehmensfilter nur solche mit Belegen dieses Unternehmens
-  let activeCustomers = data.customers.filter((c) => c.active !== false);
+  let activeCustomers = data.customers.filter((c) => c.active !== false && c.kind !== 'contact');
   if (companyId) {
     const ids = new Set([
       ...data.invoices.filter((i) => i.companyId === companyId).map((i) => i.customerId),

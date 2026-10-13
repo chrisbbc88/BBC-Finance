@@ -25,7 +25,7 @@ function Onboarding() {
   const incomplete = companies.filter((c) => !c.street || !c.city);
   const steps = [
     { done: companies.length > 0 && incomplete.length === 0, label: 'Unternehmensdaten ergänzen', text: 'Adresse, Steuerangaben, Bankverbindung und Logo für deine Rechnungen.', href: '#/companies' },
-    { done: state.customers.length > 0, label: 'Ersten Kunden anlegen', text: 'Kunden gelten für alle Unternehmen gemeinsam.', href: '#/customers' },
+    { done: state.customers.length > 0, label: 'Ersten Kontakt anlegen', text: 'Kunden und Kontakte gelten für alle Unternehmen gemeinsam.', href: '#/customers' },
     { done: state.services.length > 0, label: 'Leistungen anlegen', text: 'Wiederkehrende Leistungen mit Preis und Beschreibung.', href: '#/services' },
     { done: state.invoices.length > 0, label: 'Erste Rechnung schreiben', text: 'Unternehmen, Kunde, Leistung – fertig.', href: '#/invoices/new' },
   ];
