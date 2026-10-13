@@ -3,7 +3,9 @@
 
 import { DB_NAME, COLLECTIONS } from './schema.js';
 
-const DB_VERSION = 1;
+// Version 2 ergänzt die Sammlungen für Termine und Kundendokumentation. Beim Öffnen werden nur
+// fehlende Sammlungen angelegt – vorhandene Daten bleiben unberührt.
+const DB_VERSION = 2;
 let dbPromise = null;
 
 const req = (r) => new Promise((resolve, reject) => {
@@ -41,7 +43,13 @@ export function openDB() {
     };
     open.onsuccess = () => {
       const db = open.result;
-      db.onversionchange = () => db.close();
+      // Öffnet ein anderer Tab eine neuere Fassung des Tools, gibt dieser Tab die Datenbank frei
+      // und bittet ums Neuladen – statt mit einer veralteten Fassung weiterzuarbeiten.
+      db.onversionchange = () => {
+        db.close();
+        dbPromise = null;
+        try { window.dispatchEvent(new CustomEvent('bbc-db-replaced')); } catch (_) { /* ohne Fenster egal */ }
+      };
       resolve(db);
     };
     open.onerror = () => reject(open.error);

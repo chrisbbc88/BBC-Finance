@@ -28,11 +28,12 @@ function paymentIndex(payments) {
 }
 
 /** Umsatzwirksame Belege im Zeitraum, mit umgerechneten Beträgen. */
-export function revenueDocs(data, { companyId, range } = {}) {
+export function revenueDocs(data, { companyId, range, customerId } = {}) {
   const out = [];
   for (const inv of data.invoices) {
     if (!countsAsRevenue(inv) || !inv.totals) continue;
     if (!inCompany(inv, companyId)) continue;
+    if (customerId && inv.customerId !== customerId) continue;
     if (range && !inRange(inv.issueDate, range)) continue;
     const t = inv.totals;
     const netUSD = toUSD(t.netCents, inv.currency, inv.fx) || 0;
@@ -180,16 +181,20 @@ export function monthlySeries(data, { companyId, months, range: exact }) {
     const e = exp.filter((d) => monthKey(d.date) === key);
     const p = pay.filter((d) => monthKey(d.date) === key);
     const byCompany = {};
-    for (const d of r) byCompany[d.inv.companyId] = (byCompany[d.inv.companyId] || 0) + d.netUSD;
+    const byCompanyEUR = {};
+    for (const d of r) {
+      byCompany[d.inv.companyId] = (byCompany[d.inv.companyId] || 0) + d.netUSD;
+      byCompanyEUR[d.inv.companyId] = (byCompanyEUR[d.inv.companyId] || 0) + d.netEUR;
+    }
     return {
       key,
       revenueUSD: sum(r, 'netUSD'), revenueEUR: sum(r, 'netEUR'),
       expenseUSD: sum(e, 'netUSD'), expenseEUR: sum(e, 'netEUR'),
       profitUSD: sum(r, 'netUSD') - sum(e, 'netUSD'), profitEUR: sum(r, 'netEUR') - sum(e, 'netEUR'),
       paymentsUSD: sum(p, 'usd'), paymentsEUR: sum(p, 'eur'),
-      taxUSD: sum(r, 'taxUSD'),
+      taxUSD: sum(r, 'taxUSD'), taxEUR: sum(r, 'taxEUR'),
       invoices: r.length,
-      byCompany,
+      byCompany, byCompanyUSD: byCompany, byCompanyEUR,
     };
   });
 }
@@ -198,8 +203,8 @@ function bucketize(docs, keyFn) {
   const m = new Map();
   for (const d of docs) {
     const k = keyFn(d.date);
-    const b = m.get(k) || { key: k, usd: 0, eur: 0, taxUSD: 0, count: 0 };
-    b.usd += d.netUSD; b.eur += d.netEUR; b.taxUSD += d.taxUSD; b.count += 1;
+    const b = m.get(k) || { key: k, usd: 0, eur: 0, taxUSD: 0, taxEUR: 0, count: 0 };
+    b.usd += d.netUSD; b.eur += d.netEUR; b.taxUSD += d.taxUSD; b.taxEUR += d.taxEUR; b.count += 1;
     m.set(k, b);
   }
   return [...m.values()].sort((a, b) => (a.key < b.key ? -1 : 1));
@@ -267,6 +272,73 @@ export function revenueByService(data, scope) {
   return [...m.values()].sort((a, b) => b.usd - a.usd);
 }
 
+/**
+ * Leistungsübersicht je Kunde – automatisch aus den erstellten Rechnungen (Gutschriften werden abgezogen)
+ * und aus aktiven wiederkehrenden Vorlagen („läuft“).
+ * Ergebnis: Map<customerId, [{ key, name, category, unit, usd, eur, qty, invoices, first, last, companyIds, running, interval }]>
+ */
+export function servicesByCustomer(data, scope = {}) {
+  const svc = new Map(data.services.map((s) => [s.id, s]));
+  const keyOf = (it) => {
+    const s = it.serviceId ? svc.get(it.serviceId) : null;
+    return s ? `s:${s.id}` : `n:${String(it.name || '').trim().toLowerCase()}`;
+  };
+  const out = new Map();
+  const rowFor = (customerId, it) => {
+    if (!out.has(customerId)) out.set(customerId, new Map());
+    const m = out.get(customerId);
+    const key = keyOf(it);
+    const s = it.serviceId ? svc.get(it.serviceId) : null;
+    if (!m.has(key)) {
+      m.set(key, {
+        key, name: s ? s.name : (String(it.name || '').trim() || 'Ohne Bezeichnung'), category: s ? s.category || '' : '',
+        unit: it.unit || (s && s.unit) || '', usd: 0, eur: 0, qty: 0, invoices: new Set(), first: '', last: '',
+        companyIds: new Set(), running: false, interval: '',
+      });
+    }
+    return m.get(key);
+  };
+  for (const d of revenueDocs(data, scope)) {
+    const lines = new Map((d.inv.totals.lines || []).map((l) => [l.id, l]));
+    const items = (d.inv.items || []).filter((it) => lines.has(it.id));
+    const nets = items.map((it) => { const l = lines.get(it.id); return l.netCents != null ? l.netCents : l.cents; });
+    const partsUSD = allocate(d.netUSD, nets);
+    const partsEUR = allocate(d.netEUR, nets);
+    const credit = d.inv.type === 'credit_note';
+    items.forEach((it, idx) => {
+      const b = rowFor(d.inv.customerId, it);
+      b.usd += partsUSD[idx] || 0;
+      b.eur += partsEUR[idx] || 0;
+      b.qty += Number(it.qty) || 0;
+      if (!credit) {
+        b.invoices.add(d.inv.id);
+        b.companyIds.add(d.inv.companyId);
+        if (!b.first || d.date < b.first) b.first = d.date;
+        if (d.date > b.last) b.last = d.date;
+      }
+    });
+  }
+  for (const r of data.recurring || []) {
+    if (r.active === false || !r.customerId) continue;
+    if (!inCompany(r, scope.companyId)) continue;
+    if (scope.customerId && r.customerId !== scope.customerId) continue;
+    for (const it of r.items || []) {
+      if (!String(it.name || '').trim() && !it.serviceId) continue;
+      const b = rowFor(r.customerId, it);
+      b.running = true;
+      b.interval = r.interval;
+      b.companyIds.add(r.companyId);
+    }
+  }
+  const result = new Map();
+  for (const [cid, m] of out) {
+    result.set(cid, [...m.values()]
+      .map((b) => ({ ...b, invoices: b.invoices.size, companyIds: [...b.companyIds] }))
+      .sort((a, b) => (Number(b.running) - Number(a.running)) || (b.usd - a.usd)));
+  }
+  return result;
+}
+
 /** Umsatz in der jeweiligen Rechnungswährung (ohne Umrechnung). */
 export function revenueByCurrency(data, scope) {
   const m = new Map();
@@ -287,8 +359,8 @@ export function expensesByCategory(data, scope) {
   const m = new Map();
   for (const d of expenseDocs(data, scope)) {
     const k = d.exp.category || 'Ohne Kategorie';
-    const b = m.get(k) || { name: k, usd: 0, eur: 0, taxUSD: 0, count: 0 };
-    b.usd += d.netUSD; b.eur += d.netEUR; b.taxUSD += d.taxUSD; b.count += 1;
+    const b = m.get(k) || { name: k, usd: 0, eur: 0, taxUSD: 0, taxEUR: 0, count: 0 };
+    b.usd += d.netUSD; b.eur += d.netEUR; b.taxUSD += d.taxUSD; b.taxEUR += d.taxEUR; b.count += 1;
     m.set(k, b);
   }
   return [...m.values()].sort((a, b) => b.usd - a.usd);
@@ -336,12 +408,16 @@ export function taxOverview(data, scope) {
     // auf den Cent mit der Finanzübersicht überein.
     const taxParts = allocate(d.taxUSD, groups.map((g) => g.taxCents));
     const netParts = allocate(d.netUSD, groups.map((g) => g.netCents));
+    const taxPartsEUR = allocate(d.taxEUR, groups.map((g) => g.taxCents));
+    const netPartsEUR = allocate(d.netEUR, groups.map((g) => g.netCents));
     groups.forEach((g, i) => {
       const key = `${g.rate}|${d.inv.currency}`;
-      const b = m.get(key) || { rate: g.rate, currency: d.inv.currency, netCents: 0, taxCents: 0, netUSD: 0, taxUSD: 0 };
+      const b = m.get(key) || { rate: g.rate, currency: d.inv.currency, netCents: 0, taxCents: 0, netUSD: 0, taxUSD: 0, netEUR: 0, taxEUR: 0 };
       b.netCents += g.netCents; b.taxCents += g.taxCents;
       b.netUSD += netParts[i] || 0;
       b.taxUSD += taxParts[i] || 0;
+      b.netEUR += netPartsEUR[i] || 0;
+      b.taxEUR += taxPartsEUR[i] || 0;
       m.set(key, b);
     });
   }
@@ -350,7 +426,9 @@ export function taxOverview(data, scope) {
   return {
     collected,
     collectedUSD: collected.reduce((a, r) => a + r.taxUSD, 0),
+    collectedEUR: collected.reduce((a, r) => a + r.taxEUR, 0),
     paidUSD: sum(exp, 'taxUSD'),
+    paidEUR: sum(exp, 'taxEUR'),
   };
 }
 

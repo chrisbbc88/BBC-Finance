@@ -16,7 +16,7 @@ import {
 } from '../lib/util.js';
 import { INVOICE_STATUS } from '../lib/schema.js';
 import { invoiceStatus, sumPayments } from '../lib/calc.js';
-import { storeData, scopeCompanyId, customerLabel } from './shared.js';
+import { storeData, scopeCompanyId, customerLabel, CUR, ALT, pick, pickAlt, mc, ma } from './shared.js';
 
 /* ---------- Zeitraumfilter ---------- */
 
@@ -50,8 +50,9 @@ function PeriodFilter({ p }) {
 }
 
 const share = (part, total) => (total ? pct(Math.round((part / total) * 1000) / 10) : '–');
-const usd = (c) => ({ v: c / 100, t: money(c, 'USD') });
-const eur = (c) => ({ v: c / 100, t: money(c, 'EUR') });
+// Zellen in der Anzeigewährung (dc) und in der Zweitwährung (da) – Wert für Excel, Text für die Anzeige.
+const dc = (c) => ({ v: c / 100, t: mc(c) });
+const da = (c) => ({ v: c / 100, t: ma(c) });
 const cur = (c, currency) => ({ v: c / 100, t: money(c, currency) });
 const dt = (iso) => ({ v: iso || '', t: iso ? date(iso) : '' });
 const M = { align: 'right', type: 'money' };
@@ -87,48 +88,49 @@ export function FinanceView() {
     { id: 'rev', label: 'Einnahmen', color: 'var(--series-1)' },
     { id: 'exp', label: 'Ausgaben', color: 'var(--series-2)' },
   ];
-  const groups = v.series.map((m) => ({ key: m.key, label: monthShort(m.key), title: monthName(m.key), values: { rev: m.revenueUSD, exp: m.expenseUSD } }));
+  const groups = v.series.map((m) => ({ key: m.key, label: monthShort(m.key), title: monthName(m.key), values: { rev: pick(m, 'revenue'), exp: pick(m, 'expense') } }));
   const table = {
     columns: ['Monat', 'Einnahmen', 'Ausgaben', 'Gewinn', 'Zahlungseingänge'],
-    rows: v.series.map((m) => [monthName(m.key), money(m.revenueUSD, 'USD'), money(m.expenseUSD, 'USD'), money(m.profitUSD, 'USD'), money(m.paymentsUSD, 'USD')]),
+    rows: v.series.map((m) => [monthName(m.key), mc(pick(m, 'revenue')), mc(pick(m, 'expense')), mc(pick(m, 'profit')), mc(pick(m, 'payments'))]),
   };
+  const ranked = (rows) => [...rows].sort((a, b) => pick(b) - pick(a));
 
   return html`
-    <${PageHeader} title="Finanzübersicht" sub="Einnahmen, Ausgaben und Gewinn im gewählten Zeitraum. Beträge netto in USD, Euro als Zweitwert.">
+    <${PageHeader} title="Finanzübersicht" sub=${`Einnahmen, Ausgaben und Gewinn im gewählten Zeitraum. Beträge netto in ${CUR()}, ${ALT()} als Zweitwert.`}>
       <${Button} icon="reports" onClick=${() => navigate('/reports')}>Reports und Export<//>
     <//>
     <${PeriodFilter} p=${p} />
 
     <div class="stat-row stat-row-3">
-      <${Stat} label="Einnahmen" value=${money(s.income.usd, 'USD')} sub=${`≈ ${money(s.income.eur, 'EUR')}, ${s.income.count} Rechnungen`} />
-      <${Stat} label="Ausgaben" value=${money(s.expenses.usd, 'USD')} sub=${`≈ ${money(s.expenses.eur, 'EUR')}, ${s.expenses.count} Belege`} />
-      <${Stat} label="Gewinn" value=${money(s.profit.usd, 'USD')} tone=${s.profit.usd < 0 ? 'bad' : 'good'} sub=${`≈ ${money(s.profit.eur, 'EUR')}`} />
+      <${Stat} label="Einnahmen" value=${mc(pick(s.income))} sub=${`≈ ${ma(pickAlt(s.income))}, ${s.income.count} Rechnungen`} />
+      <${Stat} label="Ausgaben" value=${mc(pick(s.expenses))} sub=${`≈ ${ma(pickAlt(s.expenses))}, ${s.expenses.count} Belege`} />
+      <${Stat} label="Gewinn" value=${mc(pick(s.profit))} tone=${pick(s.profit) < 0 ? 'bad' : 'good'} sub=${`≈ ${ma(pickAlt(s.profit))}`} />
     </div>
     <div class="stat-row stat-row-3">
-      <${Stat} label="Zahlungseingänge" value=${money(s.payments.usd, 'USD')} sub=${`≈ ${money(s.payments.eur, 'EUR')}, ${s.payments.count} Zahlungen`} />
-      <${Stat} label="Offene Forderungen (heute)" value=${money(s.receivables.usd, 'USD')} sub=${`≈ ${money(s.receivables.eur, 'EUR')}, ${s.receivables.count} Rechnungen`} href="#/invoices?status=open" />
-      <${Stat} label="Steuern (Saldo)" value=${money(s.taxBalance.usd, 'USD')}
-        sub=${`berechnet ${money(s.taxCollected.usd, 'USD')}, in Ausgaben ${money(s.taxPaid.usd, 'USD')}`} />
+      <${Stat} label="Zahlungseingänge" value=${mc(pick(s.payments))} sub=${`≈ ${ma(pickAlt(s.payments))}, ${s.payments.count} Zahlungen`} />
+      <${Stat} label="Offene Forderungen (heute)" value=${mc(pick(s.receivables))} sub=${`≈ ${ma(pickAlt(s.receivables))}, ${s.receivables.count} Rechnungen`} href="#/invoices?status=open" />
+      <${Stat} label="Steuern (Saldo)" value=${mc(pick(s.taxBalance))}
+        sub=${`berechnet ${mc(pick(s.taxCollected))}, in Ausgaben ${mc(pick(s.taxPaid))}`} />
     </div>
 
     ${v.series.length > 0 && html`<${ChartFigure} title="Einnahmen und Ausgaben je Monat"
-      sub=${v.truncated ? 'Netto in USD. Das Diagramm zeigt die letzten 24 Monate des Zeitraums; die Kennzahlen oben zählen alles.' : 'Netto in USD'} series=${series} table=${table}>
-      <${ColumnChart} groups=${groups} series=${series} mode="grouped" format=${(x) => money(x, 'USD')} axisFormat=${(x) => moneyCompact(x, 'USD')}
+      sub=${v.truncated ? `Netto in ${CUR()}. Das Diagramm zeigt die letzten 24 Monate des Zeitraums; die Kennzahlen oben zählen alles.` : `Netto in ${CUR()}`} series=${series} table=${table}>
+      <${ColumnChart} groups=${groups} series=${series} mode="grouped" format=${(x) => mc(x)} axisFormat=${(x) => moneyCompact(x, CUR())}
         ariaLabel="Säulendiagramm: Einnahmen und Ausgaben je Monat" />
     <//>`}
 
     <div class="dash-lists">
       ${!company && html`<${Panel} title="Umsatz pro Unternehmen">
-        <${BarList} rows=${v.byCompany.map((r) => ({ key: r.id, label: r.name, value: r.usd, display: money(r.usd, 'USD'), color: markColor(r.color) }))} />
+        <${BarList} rows=${ranked(v.byCompany).map((r) => ({ key: r.id, label: r.name, value: pick(r), display: mc(pick(r)), color: markColor(r.color) }))} />
       <//>`}
       <${Panel} title="Umsatz pro Kunde">
-        <${BarList} rows=${v.byCustomer.map((r) => ({ key: r.id, label: r.name, value: r.usd, display: money(r.usd, 'USD'), href: `#/customers/${r.id}` }))} />
+        <${BarList} rows=${ranked(v.byCustomer).map((r) => ({ key: r.id, label: r.name, value: pick(r), display: mc(pick(r)), href: `#/customers/${r.id}` }))} />
       <//>
       <${Panel} title="Umsatz pro Leistung">
-        <${BarList} rows=${v.byService.map((r) => ({ key: r.key, label: r.name, value: r.usd, display: money(r.usd, 'USD') }))} />
+        <${BarList} rows=${ranked(v.byService).map((r) => ({ key: r.key, label: r.name, value: pick(r), display: mc(pick(r)) }))} />
       <//>
       <${Panel} title="Ausgaben nach Kategorie">
-        <${BarList} rows=${v.byCategory.map((r) => ({ key: r.name, label: r.name, value: r.usd, display: money(r.usd, 'USD'), color: 'var(--series-2)' }))} />
+        <${BarList} rows=${ranked(v.byCategory).map((r) => ({ key: r.name, label: r.name, value: pick(r), display: mc(pick(r)), color: 'var(--series-2)' }))} />
       <//>
     </div>
     <p class="footnote">
@@ -142,38 +144,39 @@ export function FinanceView() {
 
 function periodTable(data, scope, grain, labelFn, first) {
   const rows = revenueByPeriod(data, scope, grain);
-  const total = rows.reduce((a, r) => ({ usd: a.usd + r.usd, eur: a.eur + r.eur, tax: a.tax + r.taxUSD, count: a.count + r.count }), { usd: 0, eur: 0, tax: 0, count: 0 });
+  const total = rows.reduce((a, r) => ({ c: a.c + pick(r), a: a.a + pickAlt(r), tax: a.tax + pick(r, 'tax'), count: a.count + r.count }), { c: 0, a: 0, tax: 0, count: 0 });
   return {
-    columns: [{ label: first }, { label: 'Belege', ...N }, { label: 'Umsatz netto (USD)', ...M }, { label: 'Umsatz netto (EUR)', ...M }, { label: 'Steuer (USD)', ...M }],
-    rows: rows.map((r) => [labelFn(r.key), r.count, usd(r.usd), eur(r.eur), usd(r.taxUSD)]),
-    totals: ['Summe', total.count, usd(total.usd), eur(total.eur), usd(total.tax)],
+    columns: [{ label: first }, { label: 'Belege', ...N }, { label: `Umsatz netto (${CUR()})`, ...M }, { label: `Umsatz netto (${ALT()})`, ...M }, { label: `Steuer (${CUR()})`, ...M }],
+    rows: rows.map((r) => [labelFn(r.key), r.count, dc(pick(r)), da(pickAlt(r)), dc(pick(r, 'tax'))]),
+    totals: ['Summe', total.count, dc(total.c), da(total.a), dc(total.tax)],
     chart: {
       series: [{ id: 'rev', label: 'Umsatz', color: 'var(--series-1)' }],
-      groups: rows.map((r) => ({ key: r.key, label: grain === 'month' ? monthShort(r.key) : labelFn(r.key), title: labelFn(r.key), values: { rev: r.usd } })),
+      groups: rows.map((r) => ({ key: r.key, label: grain === 'month' ? monthShort(r.key) : labelFn(r.key), title: labelFn(r.key), values: { rev: pick(r) } })),
     },
   };
 }
 
-function rankTable(rows, first, extra = []) {
-  const total = rows.reduce((a, r) => ({ usd: a.usd + r.usd, eur: a.eur + r.eur }), { usd: 0, eur: 0 });
+function rankTable(input, first, extra = []) {
+  const rows = [...input].sort((a, b) => pick(b) - pick(a));
+  const total = rows.reduce((a, r) => ({ c: a.c + pick(r), a: a.a + pickAlt(r) }), { c: 0, a: 0 });
   return {
-    columns: [{ label: first }, ...extra.map((e) => e.col), { label: 'Umsatz netto (USD)', ...M }, { label: 'Umsatz netto (EUR)', ...M }, { label: 'Anteil', align: 'right' }],
-    rows: rows.map((r) => [r.name, ...extra.map((e) => e.cell(r)), usd(r.usd), eur(r.eur), share(r.usd, total.usd)]),
-    totals: ['Summe', ...extra.map(() => ''), usd(total.usd), eur(total.eur), ''],
+    columns: [{ label: first }, ...extra.map((e) => e.col), { label: `Umsatz netto (${CUR()})`, ...M }, { label: `Umsatz netto (${ALT()})`, ...M }, { label: 'Anteil', align: 'right' }],
+    rows: rows.map((r) => [r.name, ...extra.map((e) => e.cell(r)), dc(pick(r)), da(pickAlt(r)), share(pick(r), total.c)]),
+    totals: ['Summe', ...extra.map(() => ''), dc(total.c), da(total.a), ''],
   };
 }
 
 function openTable(data, scope, today, onlyOverdue) {
   let rows = receivables(data, { companyId: scope.companyId }, today);
   if (onlyOverdue) rows = rows.filter((r) => r.status === 'overdue');
-  const total = rows.reduce((a, r) => a + r.openUSD, 0);
-  const aging = AGING.map((b) => ({ ...b, usd: rows.filter((r) => r.bucket === b.id).reduce((a, r) => a + r.openUSD, 0), count: rows.filter((r) => r.bucket === b.id).length }));
+  const total = rows.reduce((a, r) => a + pick(r, 'open'), 0);
+  const aging = AGING.map((b) => ({ ...b, value: rows.filter((r) => r.bucket === b.id).reduce((a, r) => a + pick(r, 'open'), 0), count: rows.filter((r) => r.bucket === b.id).length }));
   return {
     columns: [{ label: 'Nummer' }, { label: 'Kunde' }, { label: 'Unternehmen' }, { label: 'Rechnungsdatum', type: 'date' }, { label: 'Fällig', type: 'date' },
-      { label: 'Tage überfällig', ...N }, { label: 'Währung' }, { label: 'Rechnungsbetrag', ...M }, { label: 'Offen', ...M }, { label: 'Offen (USD)', ...M }],
+      { label: 'Tage überfällig', ...N }, { label: 'Währung' }, { label: 'Rechnungsbetrag', ...M }, { label: 'Offen', ...M }, { label: `Offen (${CUR()})`, ...M }],
     rows: rows.map((r) => [r.inv.number, customerLabel(r.inv), (byId('companies', r.inv.companyId) || {}).name || '', dt(r.inv.issueDate), dt(r.inv.dueDate),
-      r.overdueDays, r.inv.currency, cur(r.inv.totals.totalCents, r.inv.currency), cur(r.openCents, r.inv.currency), usd(r.openUSD)]),
-    totals: ['Summe', '', '', '', '', '', '', '', '', usd(total)],
+      r.overdueDays, r.inv.currency, cur(r.inv.totals.totalCents, r.inv.currency), cur(r.openCents, r.inv.currency), dc(pick(r, 'open'))]),
+    totals: ['Summe', '', '', '', '', '', '', '', '', dc(total)],
     aging: onlyOverdue ? null : aging,
     note: 'Stichtag heute – unabhängig vom gewählten Zeitraum.',
   };
@@ -199,8 +202,8 @@ const REPORTS = [
       return {
         columns: [{ label: 'Rechnungswährung' }, { label: 'Rechnungen', ...N }, { label: 'Netto', ...M }, { label: 'Steuer', ...M }, { label: 'Brutto', ...M },
           { label: 'Netto in USD', ...M }, { label: 'Netto in EUR', ...M }],
-        rows: rows.map((r) => [r.currency, r.count, cur(r.netCents, r.currency), cur(r.taxCents, r.currency), cur(r.totalCents, r.currency), usd(r.usd), eur(r.eur)]),
-        totals: ['Summe', rows.reduce((a, r) => a + r.count, 0), '', '', '', usd(rows.reduce((a, r) => a + r.usd, 0)), eur(rows.reduce((a, r) => a + r.eur, 0))],
+        rows: rows.map((r) => [r.currency, r.count, cur(r.netCents, r.currency), cur(r.taxCents, r.currency), cur(r.totalCents, r.currency), cur(r.usd, 'USD'), cur(r.eur, 'EUR')]),
+        totals: ['Summe', rows.reduce((a, r) => a + r.count, 0), '', '', '', cur(rows.reduce((a, r) => a + r.usd, 0), 'USD'), cur(rows.reduce((a, r) => a + r.eur, 0), 'EUR')],
       };
     },
   },
@@ -211,15 +214,15 @@ const REPORTS = [
     build: (d, s) => {
       const months = rangeMonths(s.range, d, s.companyId);
       const rows = months.length ? monthlySeries(d, { companyId: s.companyId, months, range: s.range }) : [];
-      const t = rows.reduce((a, r) => ({ rev: a.rev + r.revenueUSD, exp: a.exp + r.expenseUSD, eur: a.eur + r.profitEUR }), { rev: 0, exp: 0, eur: 0 });
+      const t = rows.reduce((a, r) => ({ rev: a.rev + pick(r, 'revenue'), exp: a.exp + pick(r, 'expense'), alt: a.alt + pickAlt(r, 'profit') }), { rev: 0, exp: 0, alt: 0 });
       return {
-        columns: [{ label: 'Monat' }, { label: 'Einnahmen (USD)', ...M }, { label: 'Ausgaben (USD)', ...M }, { label: 'Gewinn (USD)', ...M }, { label: 'Gewinn (EUR)', ...M }],
-        rows: rows.map((r) => [monthName(r.key), usd(r.revenueUSD), usd(r.expenseUSD), usd(r.profitUSD), eur(r.profitEUR)]),
-        totals: ['Summe', usd(t.rev), usd(t.exp), usd(t.rev - t.exp), eur(t.eur)],
+        columns: [{ label: 'Monat' }, { label: `Einnahmen (${CUR()})`, ...M }, { label: `Ausgaben (${CUR()})`, ...M }, { label: `Gewinn (${CUR()})`, ...M }, { label: `Gewinn (${ALT()})`, ...M }],
+        rows: rows.map((r) => [monthName(r.key), dc(pick(r, 'revenue')), dc(pick(r, 'expense')), dc(pick(r, 'profit')), da(pickAlt(r, 'profit'))]),
+        totals: ['Summe', dc(t.rev), dc(t.exp), dc(t.rev - t.exp), da(t.alt)],
         chart: {
           mode: 'grouped',
           series: [{ id: 'rev', label: 'Einnahmen', color: 'var(--series-1)' }, { id: 'exp', label: 'Ausgaben', color: 'var(--series-2)' }],
-          groups: rows.slice(-24).map((r) => ({ key: r.key, label: monthShort(r.key), title: monthName(r.key), values: { rev: r.revenueUSD, exp: r.expenseUSD } })),
+          groups: rows.slice(-24).map((r) => ({ key: r.key, label: monthShort(r.key), title: monthName(r.key), values: { rev: pick(r, 'revenue'), exp: pick(r, 'expense') } })),
         },
       };
     },
@@ -227,12 +230,12 @@ const REPORTS = [
   {
     id: 'costs', label: 'Kostenübersicht',
     build: (d, s) => {
-      const rows = expensesByCategory(d, s);
-      const t = rows.reduce((a, r) => ({ usd: a.usd + r.usd, eur: a.eur + r.eur, tax: a.tax + r.taxUSD, count: a.count + r.count }), { usd: 0, eur: 0, tax: 0, count: 0 });
+      const rows = [...expensesByCategory(d, s)].sort((a, b) => pick(b) - pick(a));
+      const t = rows.reduce((a, r) => ({ c: a.c + pick(r), a: a.a + pickAlt(r), tax: a.tax + pick(r, 'tax'), count: a.count + r.count }), { c: 0, a: 0, tax: 0, count: 0 });
       return {
-        columns: [{ label: 'Kategorie' }, { label: 'Belege', ...N }, { label: 'Netto (USD)', ...M }, { label: 'Netto (EUR)', ...M }, { label: 'Steuer (USD)', ...M }, { label: 'Anteil', align: 'right' }],
-        rows: rows.map((r) => [r.name, r.count, usd(r.usd), eur(r.eur), usd(r.taxUSD), share(r.usd, t.usd)]),
-        totals: ['Summe', t.count, usd(t.usd), eur(t.eur), usd(t.tax), ''],
+        columns: [{ label: 'Kategorie' }, { label: 'Belege', ...N }, { label: `Netto (${CUR()})`, ...M }, { label: `Netto (${ALT()})`, ...M }, { label: `Steuer (${CUR()})`, ...M }, { label: 'Anteil', align: 'right' }],
+        rows: rows.map((r) => [r.name, r.count, dc(pick(r)), da(pickAlt(r)), dc(pick(r, 'tax')), share(pick(r), t.c)]),
+        totals: ['Summe', t.count, dc(t.c), da(t.a), dc(t.tax), ''],
       };
     },
   },
@@ -241,12 +244,12 @@ const REPORTS = [
     build: (d, s) => {
       const t = taxOverview(d, s);
       return {
-        columns: [{ label: 'Position' }, { label: 'Währung' }, { label: 'Nettobetrag', ...M }, { label: 'Steuer', ...M }, { label: 'Steuer (USD)', ...M }],
+        columns: [{ label: 'Position' }, { label: 'Währung' }, { label: 'Nettobetrag', ...M }, { label: 'Steuer', ...M }, { label: `Steuer (${CUR()})`, ...M }],
         rows: [
-          ...t.collected.map((r) => [`Berechnet in Rechnungen, Satz ${pct(r.rate)}`, r.currency, cur(r.netCents, r.currency), cur(r.taxCents, r.currency), usd(r.taxUSD)]),
-          ['In Ausgaben enthaltene Steuer', 'USD', '', '', usd(-t.paidUSD)],
+          ...t.collected.map((r) => [`Berechnet in Rechnungen, Satz ${pct(r.rate)}`, r.currency, cur(r.netCents, r.currency), cur(r.taxCents, r.currency), dc(pick(r, 'tax'))]),
+          ['In Ausgaben enthaltene Steuer', CUR(), '', '', dc(-pick(t, 'paid'))],
         ],
-        totals: ['Saldo', '', '', '', usd(t.collectedUSD - t.paidUSD)],
+        totals: ['Saldo', '', '', '', dc(pick(t, 'collected') - pick(t, 'paid'))],
         note: 'Rechnerische Übersicht aus den erfassten Belegen. Ob und wie Steuern anzumelden sind, klärst du mit deiner Steuerberatung.',
       };
     },
@@ -255,21 +258,21 @@ const REPORTS = [
     id: 'invoices', label: 'Rechnungsliste',
     build: (d, s, today) => {
       const docs = revenueDocs(d, s).sort((a, b) => (a.date < b.date ? -1 : 1));
-      const t = docs.reduce((a, r) => ({ net: a.net + r.netUSD, tax: a.tax + r.taxUSD, total: a.total + r.totalUSD }), { net: 0, tax: 0, total: 0 });
+      const t = docs.reduce((a, r) => ({ net: a.net + pick(r, 'net'), tax: a.tax + pick(r, 'tax'), total: a.total + pick(r, 'total') }), { net: 0, tax: 0, total: 0 });
       return {
         columns: [{ label: 'Nummer' }, { label: 'Datum', type: 'date' }, { label: 'Kunde' }, { label: 'Unternehmen' }, { label: 'Währung' },
-          { label: 'Netto', ...M }, { label: 'Steuer', ...M }, { label: 'Brutto', ...M }, { label: 'Netto (USD)', ...M }, { label: 'Kurs USD/EUR', ...N }, { label: 'Bezahlt', ...M }, { label: 'Status' }],
+          { label: 'Netto', ...M }, { label: 'Steuer', ...M }, { label: 'Brutto', ...M }, { label: `Netto (${CUR()})`, ...M }, { label: 'Kurs USD/EUR', ...N }, { label: 'Bezahlt', ...M }, { label: 'Status' }],
         rows: docs.map((r) => {
           const inv = r.inv;
           const pays = paymentsOf(inv.id);
           const st = invoiceStatus(inv, pays, today);
           return [inv.number, dt(inv.issueDate), customerLabel(inv), (byId('companies', inv.companyId) || {}).name || '', inv.currency,
-            cur(inv.totals.netCents, inv.currency), cur(inv.totals.taxCents, inv.currency), cur(inv.totals.totalCents, inv.currency), usd(r.netUSD),
+            cur(inv.totals.netCents, inv.currency), cur(inv.totals.taxCents, inv.currency), cur(inv.totals.totalCents, inv.currency), dc(pick(r, 'net')),
             inv.fx ? { v: Number(inv.fx.usdToEur), t: num(inv.fx.usdToEur, 'de', 4) } : '',
             cur(sumPayments(pays), inv.currency), (INVOICE_STATUS[st] || {}).label || st];
         }),
-        totals: ['Summe', '', '', '', 'USD', usd(t.net), usd(t.tax), usd(t.total), usd(t.net), '', '', ''],
-        note: 'Die Summenzeile ist in USD umgerechnet; die Zeilen zeigen die Beträge in Rechnungswährung.',
+        totals: ['Summe', '', '', '', CUR(), dc(t.net), dc(t.tax), dc(t.total), dc(t.net), '', '', ''],
+        note: `Die Summenzeile ist in ${CUR()} umgerechnet; die Zeilen zeigen die Beträge in Rechnungswährung.`,
       };
     },
   },
@@ -278,9 +281,9 @@ const REPORTS = [
     build: (d, s) => {
       const rows = paymentDocs(d, s).sort((a, b) => (a.date < b.date ? -1 : 1));
       return {
-        columns: [{ label: 'Datum', type: 'date' }, { label: 'Rechnung' }, { label: 'Kunde' }, { label: 'Zahlungsart' }, { label: 'Währung' }, { label: 'Betrag', ...M }, { label: 'Betrag (USD)', ...M }],
-        rows: rows.map((r) => [dt(r.date), r.inv.number, customerLabel(r.inv), r.pay.method || '', r.inv.currency, cur(r.pay.amountCents, r.inv.currency), usd(r.usd)]),
-        totals: ['Summe', '', '', '', '', '', usd(rows.reduce((a, r) => a + r.usd, 0))],
+        columns: [{ label: 'Datum', type: 'date' }, { label: 'Rechnung' }, { label: 'Kunde' }, { label: 'Zahlungsart' }, { label: 'Währung' }, { label: 'Betrag', ...M }, { label: `Betrag (${CUR()})`, ...M }],
+        rows: rows.map((r) => [dt(r.date), r.inv.number, customerLabel(r.inv), r.pay.method || '', r.inv.currency, cur(r.pay.amountCents, r.inv.currency), dc(pick(r))]),
+        totals: ['Summe', '', '', '', '', '', dc(rows.reduce((a, r) => a + pick(r), 0))],
       };
     },
   },
@@ -288,17 +291,17 @@ const REPORTS = [
     id: 'expenses', label: 'Ausgabenliste',
     build: (d, s) => {
       const rows = expenseDocs(d, s).sort((a, b) => (a.date < b.date ? -1 : 1));
-      const t = rows.reduce((a, r) => ({ net: a.net + r.netUSD, tax: a.tax + r.taxUSD, total: a.total + r.totalUSD }), { net: 0, tax: 0, total: 0 });
+      const t = rows.reduce((a, r) => ({ net: a.net + pick(r, 'net'), tax: a.tax + pick(r, 'tax'), total: a.total + pick(r, 'total') }), { net: 0, tax: 0, total: 0 });
       return {
         columns: [{ label: 'Datum', type: 'date' }, { label: 'Lieferant' }, { label: 'Kategorie' }, { label: 'Beschreibung' }, { label: 'Rechnungsnr.' }, { label: 'Unternehmen' },
-          { label: 'Währung' }, { label: 'Netto', ...M }, { label: 'Steuer', ...M }, { label: 'Gesamt', ...M }, { label: 'Gesamt (USD)', ...M }, { label: 'Bezahlt am', type: 'date' }, { label: 'Zahlungsart' }],
+          { label: 'Währung' }, { label: 'Netto', ...M }, { label: 'Steuer', ...M }, { label: 'Gesamt', ...M }, { label: `Gesamt (${CUR()})`, ...M }, { label: 'Bezahlt am', type: 'date' }, { label: 'Zahlungsart' }],
         rows: rows.map((r) => {
           const e = r.exp;
           return [dt(e.invoiceDate), e.vendor, e.category, e.description, e.invoiceNumber, (byId('companies', e.companyId) || {}).name || '', e.currency,
-            cur(e.netCents, e.currency), cur(e.taxCents, e.currency), cur(e.totalCents, e.currency), usd(r.totalUSD), dt(e.paymentDate), e.paymentMethod];
+            cur(e.netCents, e.currency), cur(e.taxCents, e.currency), cur(e.totalCents, e.currency), dc(pick(r, 'total')), dt(e.paymentDate), e.paymentMethod];
         }),
-        totals: ['Summe', '', '', '', '', '', 'USD', usd(t.net), usd(t.tax), usd(t.total), usd(t.total), '', ''],
-        note: 'Die Summenzeile ist in USD umgerechnet; die Zeilen zeigen die Beträge in Belegwährung.',
+        totals: ['Summe', '', '', '', '', '', CUR(), dc(t.net), dc(t.tax), dc(t.total), dc(t.total), '', ''],
+        note: `Die Summenzeile ist in ${CUR()} umgerechnet; die Zeilen zeigen die Beträge in Belegwährung.`,
       };
     },
   },
@@ -316,7 +319,7 @@ export function ReportsView({ params }) {
   const company = currentCompany();
   const data = storeData();
   const report = REPORTS.find((r) => r.id === reportId);
-  const table = useMemo(() => report.build(data, { companyId, range: p.range }, today), [state.version, reportId, companyId, p.range.from, p.range.to]);
+  const table = useMemo(() => report.build(data, { companyId, range: p.range }, today), [state.version, reportId, companyId, p.range.from, p.range.to, CUR()]);
 
   const stichtag = reportId === 'open' || reportId === 'overdue';
   const subtitle = `${company ? company.name : 'Alle Unternehmen'}, ${stichtag ? `Stichtag ${date(today)}` : periodLabel(p)}`;
@@ -350,11 +353,11 @@ export function ReportsView({ params }) {
         <${PeriodFilter} p=${p} />
         ${table.note && html`<p class="footnote">${table.note}</p>`}
         ${table.aging && html`<div class="stat-row stat-row-5">
-          ${table.aging.map((b) => html`<${Stat} label=${b.label} value=${money(b.usd, 'USD')} sub=${`${b.count} ${b.count === 1 ? 'Rechnung' : 'Rechnungen'}`} tone=${b.id !== 'current' && b.usd ? 'bad' : ''} />`)}
+          ${table.aging.map((b) => html`<${Stat} label=${b.label} value=${mc(b.value)} sub=${`${b.count} ${b.count === 1 ? 'Rechnung' : 'Rechnungen'}`} tone=${b.id !== 'current' && b.value ? 'bad' : ''} />`)}
         </div>`}
-        ${table.chart && table.chart.groups.length > 1 && html`<${ChartFigure} title=${report.label} sub="Netto in USD" series=${table.chart.series}>
+        ${table.chart && table.chart.groups.length > 1 && html`<${ChartFigure} title=${report.label} sub=${`Netto in ${CUR()}`} series=${table.chart.series}>
           <${ColumnChart} groups=${table.chart.groups} series=${table.chart.series} mode=${table.chart.mode || 'stacked'}
-            format=${(x) => money(x, 'USD')} axisFormat=${(x) => moneyCompact(x, 'USD')} ariaLabel=${report.label} />
+            format=${(x) => mc(x)} axisFormat=${(x) => moneyCompact(x, CUR())} ariaLabel=${report.label} />
         <//>`}
         ${table.rows.length
           ? html`<div class="table-wrap"><table class="table table-compact report-table">

@@ -14,7 +14,8 @@ import { money, moneyCompact, date } from '../lib/format.js';
 import {
   todayISO, lastMonths, monthName, monthShort, periodRange, addDays,
 } from '../lib/util.js';
-import { storeData, scopeCompanyId, customerLabel } from './shared.js';
+import { storeData, scopeCompanyId, customerLabel, CUR, pick, pickAlt, mc, ma } from './shared.js';
+import { UpcomingAppointments } from './appointments.js';
 import { reminderDueLevel } from './send.js';
 import { REMINDER_LEVELS } from '../lib/schema.js';
 import { loadDemo } from '../lib/demo.js';
@@ -55,6 +56,9 @@ function Onboarding() {
   </section>`;
 }
 
+/** Ranglisten nach dem Wert in der Anzeigewährung ordnen. */
+const byDisp = (rows) => [...rows].sort((a, b) => pick(b) - pick(a));
+
 export function DashboardView() {
   useStore();
   const today = todayISO();
@@ -76,6 +80,7 @@ export function DashboardView() {
       rec: receivables(data, { companyId }, today),
     };
   }, [state.version, companyId, today]);
+  const cur = CUR();
 
   const hasAnything = state.invoices.length || state.expenses.length || state.customers.length || state.services.length;
   if (!hasAnything) return html`<${Onboarding} />`;
@@ -102,14 +107,14 @@ export function DashboardView() {
     : [{ id: 'rev', label: 'Umsatz', color: 'var(--series-1)' }];
   const groups = view.series.map((m) => ({
     key: m.key, label: monthShort(m.key), title: monthName(m.key),
-    values: stackCompanies ? m.byCompany : { rev: m.revenueUSD },
+    values: stackCompanies ? m[`byCompany${CUR()}`] : { rev: pick(m, 'revenue') },
   }));
   const table = {
-    columns: ['Monat', ...(stackCompanies ? chartSeries.map((s) => s.label) : []), 'Umsatz (USD)', 'Umsatz (EUR)'],
+    columns: ['Monat', ...(stackCompanies ? chartSeries.map((s) => s.label) : []), `Umsatz (${CUR()})`, `Umsatz (${CUR() === 'USD' ? 'EUR' : 'USD'})`],
     rows: view.series.map((m) => [
       monthName(m.key),
-      ...(stackCompanies ? chartSeries.map((s) => money(m.byCompany[s.id] || 0, 'USD')) : []),
-      money(m.revenueUSD, 'USD'), money(m.revenueEUR, 'EUR'),
+      ...(stackCompanies ? chartSeries.map((s) => mc(m[`byCompany${CUR()}`][s.id] || 0)) : []),
+      mc(pick(m, 'revenue')), ma(pickAlt(m, 'revenue')),
     ]),
   };
 
@@ -117,31 +122,31 @@ export function DashboardView() {
     <section class="hero">
       <div class="hero-main">
         <div class="hero-label">Umsatz ${monthLabel}${company ? `, ${company.name}` : ''}</div>
-        <div class="hero-figure">${money(kpi.month.usd, 'USD')}</div>
+        <div class="hero-figure">${mc(pick(kpi.month))}</div>
         <div class="hero-sub">
-          <span>≈ ${money(kpi.month.eur, 'EUR')}</span>
+          <span>≈ ${ma(pickAlt(kpi.month))}</span>
           <span>netto, ${kpi.month.count} ${kpi.month.count === 1 ? 'Rechnung' : 'Rechnungen'}</span>
-          <span>Vormonat ${money(kpi.lastMonth.usd, 'USD')}</span>
+          <span>Vormonat ${mc(pick(kpi.lastMonth))}</span>
         </div>
       </div>
     </section>
 
     <div class="stat-row">
-      <${Stat} label="Umsatz Quartal" value=${money(kpi.quarter.usd, 'USD')} sub=${`≈ ${money(kpi.quarter.eur, 'EUR')}`} />
-      <${Stat} label="Umsatz Jahr" value=${money(kpi.year.usd, 'USD')} sub=${`≈ ${money(kpi.year.eur, 'EUR')}`} />
-      <${Stat} label="Offene Rechnungen" value=${money(kpi.open.usd, 'USD')} sub=${`${kpi.open.count} offen, ≈ ${money(kpi.open.eur, 'EUR')}`} href="#/invoices?status=open" />
-      <${Stat} label="Überfällig" value=${money(kpi.overdue.usd, 'USD')} tone=${kpi.overdue.count ? 'bad' : ''}
-        sub=${`${kpi.overdue.count} überfällig, ≈ ${money(kpi.overdue.eur, 'EUR')}`} href="#/invoices?status=overdue" />
-      <${Stat} label="Bezahlt dieses Jahr" value=${money(kpi.paid.usd, 'USD')} sub=${`${kpi.paid.count} Rechnungen`} href="#/invoices?status=paid" />
-      <${Stat} label="Rechnung im Schnitt" value=${money(kpi.average.usd, 'USD')} sub=${`≈ ${money(kpi.average.eur, 'EUR')}`} />
+      <${Stat} label="Umsatz Quartal" value=${mc(pick(kpi.quarter))} sub=${`≈ ${ma(pickAlt(kpi.quarter))}`} />
+      <${Stat} label="Umsatz Jahr" value=${mc(pick(kpi.year))} sub=${`≈ ${ma(pickAlt(kpi.year))}`} />
+      <${Stat} label="Offene Rechnungen" value=${mc(pick(kpi.open))} sub=${`${kpi.open.count} offen, ≈ ${ma(pickAlt(kpi.open))}`} href="#/invoices?status=open" />
+      <${Stat} label="Überfällig" value=${mc(pick(kpi.overdue))} tone=${kpi.overdue.count ? 'bad' : ''}
+        sub=${`${kpi.overdue.count} überfällig, ≈ ${ma(pickAlt(kpi.overdue))}`} href="#/invoices?status=overdue" />
+      <${Stat} label="Bezahlt dieses Jahr" value=${mc(pick(kpi.paid))} sub=${`${kpi.paid.count} Rechnungen`} href="#/invoices?status=paid" />
+      <${Stat} label="Rechnung im Schnitt" value=${mc(pick(kpi.average))} sub=${`≈ ${ma(pickAlt(kpi.average))}`} />
       <${Stat} label="Aktive Kunden" value=${String(kpi.activeCustomers)} href="#/customers" />
     </div>
 
     <div class="dash-grid">
       <div class="dash-main">
-        <${ChartFigure} title="Umsatz der letzten 12 Monate" sub="Netto in USD, nach Rechnungsdatum" series=${chartSeries} table=${table}>
+        <${ChartFigure} title="Umsatz der letzten 12 Monate" sub=${`Netto in ${CUR()}, nach Rechnungsdatum`} series=${chartSeries} table=${table}>
           <${ColumnChart} groups=${groups} series=${chartSeries} mode="stacked"
-            format=${(v) => money(v, 'USD')} axisFormat=${(v) => moneyCompact(v, 'USD')}
+            format=${(v) => mc(v)} axisFormat=${(v) => moneyCompact(v, CUR())}
             ariaLabel="Säulendiagramm: Umsatz der letzten zwölf Monate" />
         <//>
       </div>
@@ -197,17 +202,19 @@ export function DashboardView() {
       <//>
     </div>
 
+    <${UpcomingAppointments} />
+
     <div class="dash-lists">
       <${Panel} title="Umsatz pro Kunde" action=${html`<a class="panel-link" href="#/reports?r=customer">Report</a>`}>
-        <${BarList} rows=${view.byCustomer.map((r) => ({ key: r.id, label: r.name, value: r.usd, display: money(r.usd, 'USD'), href: `#/customers/${r.id}` }))} />
+        <${BarList} rows=${byDisp(view.byCustomer).map((r) => ({ key: r.id, label: r.name, value: pick(r), display: mc(pick(r)), href: `#/customers/${r.id}` }))} />
       <//>
       <${Panel} title="Umsatz pro Leistung" action=${html`<a class="panel-link" href="#/reports?r=service">Report</a>`}>
-        <${BarList} rows=${view.byService.map((r) => ({ key: r.key, label: r.name, value: r.usd, display: money(r.usd, 'USD') }))} />
+        <${BarList} rows=${byDisp(view.byService).map((r) => ({ key: r.key, label: r.name, value: pick(r), display: mc(pick(r)) }))} />
       <//>
       ${!company && html`<${Panel} title="Umsatz pro Unternehmen" action=${html`<a class="panel-link" href="#/reports?r=company">Report</a>`}>
-        <${BarList} rows=${view.byCompany.map((r) => ({ key: r.id, label: r.name, value: r.usd, display: money(r.usd, 'USD'), color: markColor(r.color) }))} />
+        <${BarList} rows=${byDisp(view.byCompany).map((r) => ({ key: r.id, label: r.name, value: pick(r), display: mc(pick(r)), color: markColor(r.color) }))} />
       <//>`}
     </div>
-    <p class="footnote">Ranglisten: laufendes Jahr, netto in USD. Fremdwährungen sind mit dem Kurs der jeweiligen Rechnung umgerechnet.</p>
+    <p class="footnote">Ranglisten: laufendes Jahr, netto in ${CUR()}. Fremdwährungen sind mit dem Kurs der jeweiligen Rechnung umgerechnet.</p>
   `;
 }

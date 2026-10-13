@@ -52,6 +52,7 @@ function BackupPanel() {
           `${c.companies} Unternehmen, ${c.customers} Kunden, ${c.services} Leistungen`,
           `${c.invoices} Rechnungen, ${c.quotes} Angebote, ${c.payments} Zahlungen`,
           `${c.expenses} Ausgaben, ${info.includesFiles ? `${info.fileCount} Belegdateien` : 'ohne Belegdateien'}`,
+          ...((c.appointments || c.notes) ? [`${c.appointments || 0} Termine, ${c.notes || 0} Einträge in der Kundendokumentation`] : []),
         ],
         confirmLabel: 'Daten ersetzen', danger: true,
       });
@@ -156,10 +157,13 @@ function TemplatesPanel() {
   const [lang, setLang] = useState('de');
   const [which, setWhich] = useState('invoice');
   const isReminder = /^r\d$/.test(which);
+  const isAppt = which === 'appointment';
   const level = isReminder ? Number(which.slice(1)) : 0;
-  const current = isReminder
-    ? (((s.reminderTemplates || {})[lang] || {})[level] || { subject: '', body: '' })
-    : (((s.emailTemplates || {})[lang] || {})[which] || { subject: '', body: '' });
+  const current = isAppt
+    ? (((s.appointmentTemplates || {})[lang]) || { subject: '', body: '' })
+    : isReminder
+      ? (((s.reminderTemplates || {})[lang] || {})[level] || { subject: '', body: '' })
+      : (((s.emailTemplates || {})[lang] || {})[which] || { subject: '', body: '' });
   const [subject, setSubject] = useState(current.subject);
   const [body, setBody] = useState(current.body);
   useEffect(() => { setSubject(current.subject); setBody(current.body); }, [lang, which, state.version]);
@@ -168,7 +172,11 @@ function TemplatesPanel() {
 
   async function save() {
     const ok = await attempt(async () => {
-      if (isReminder) {
+      if (isAppt) {
+        const all = JSON.parse(JSON.stringify(s.appointmentTemplates || {}));
+        all[lang] = { subject, body };
+        await setSetting('appointmentTemplates', all);
+      } else if (isReminder) {
         const all = JSON.parse(JSON.stringify(s.reminderTemplates || {}));
         all[lang] = { ...(all[lang] || {}), [level]: { subject, body } };
         await setSetting('reminderTemplates', all);
@@ -201,10 +209,13 @@ function TemplatesPanel() {
         { id: 'invoice', label: 'Rechnung versenden' },
         { id: 'quote', label: 'Angebot versenden' },
         ...REMINDER_LEVELS.map((l) => ({ id: `r${l.id}`, label: l.label })),
+        { id: 'appointment', label: 'Termineinladung' },
       ]} />
       <${Field} class="span-2" label="Sprache">
         <${Segmented} label="Sprache der Vorlage" value=${lang} onChange=${setLang} options=${[{ id: 'de', label: 'Deutsch' }, { id: 'en', label: 'Englisch' }]} />
       <//>
+      ${isAppt && html`<p class="span-6 field-hint">Platzhalter für Termine: {CONTACT}, {CUSTOMER}, {TITLE}, {DATE}, {TIME}, {END}, {TIMEZONE},
+        {MEETING} (Link und Zugangsdaten bzw. Ort – je nach Art des Termins), {LINK}, {ACCESS}, {PROVIDER}, {LOCATION}, {AGENDA}, {SENDER}, {COMPANY}.</p>`}
       <${TextField} class="span-6" label="Betreff" value=${subject} onInput=${setSubject} />
       <${TextArea} class="span-6" label="Text" value=${body} onInput=${setBody} rows=${9} />
     </div>
@@ -225,7 +236,7 @@ function DataPanel() {
   async function clear() {
     const ok = await ask({
       title: 'Alle Kunden, Leistungen und Belege löschen?',
-      text: 'Kunden, Leistungen, Rechnungen, Angebote, Zahlungen, Ausgaben, Belegdateien, Nummernzähler und das Protokoll werden gelöscht – auch selbst angelegte Einträge. Unternehmen und Einstellungen bleiben erhalten.',
+      text: 'Kunden, Leistungen, Rechnungen, Angebote, Zahlungen, Ausgaben, Belegdateien, Termine, Kundendokumentation, Nummernzähler und das Protokoll werden gelöscht – auch selbst angelegte Einträge. Unternehmen und Einstellungen bleiben erhalten.',
       confirmLabel: 'Löschen', danger: true,
     });
     if (!ok) return;

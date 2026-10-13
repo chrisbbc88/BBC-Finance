@@ -147,8 +147,104 @@ export async function deleteCustomer(id) {
   if (!c) return;
   if (customerInUse(id)) fail('Zu diesem Kunden gibt es Belege. Er kann auf „inaktiv“ gesetzt, aber nicht gelöscht werden.');
   await write(async (w) => {
+    // Dokumentation und Termine gehören zum Kunden und gehen mit ihm – im Protokoll bleiben sie erhalten.
+    const notes = all('notes').filter((n) => n.customerId === id);
+    const appts = all('appointments').filter((a) => a.customerId === id);
+    for (const n of notes) await w.del('notes', n.id);
+    for (const a of appts) await w.del('appointments', a.id);
     await w.del('customers', id);
-    await w.audit({ action: 'Kunde gelöscht', entity: 'customers', entityId: id, label: customerName(c), prev: c });
+    await w.audit({
+      action: 'Kunde gelöscht', entity: 'customers', entityId: id, label: customerName(c),
+      prev: { ...c, ...(notes.length || appts.length ? { related: { notes, appointments: appts } } : {}) },
+    });
+  });
+}
+
+/* ---------- Kundendokumentation ---------- */
+
+export async function saveNote(note) {
+  if (!byId('customers', note.customerId)) fail('Bitte einen Kunden wählen.');
+  if (!isISODate(note.date)) fail('Bitte ein gültiges Datum eintragen.');
+  if (!String(note.text || '').trim() && !String(note.title || '').trim()) fail('Bitte etwas eintragen.');
+  const before = byId('notes', note.id);
+  const rec = touch({ ...note, title: String(note.title || '').trim(), text: String(note.text || '').trim() });
+  const d = diffFields(before, rec, ['updatedAt', 'createdAt']);
+  await write(async (w) => {
+    await w.put('notes', rec);
+    await w.audit({
+      action: before ? 'Kundennotiz geändert' : 'Kundennotiz angelegt', entity: 'notes', entityId: rec.id,
+      label: `${customerName(byId('customers', rec.customerId))}: ${rec.title || rec.text.slice(0, 40)}`,
+      prev: before ? d.prev : null, next: before ? d.next : { date: rec.date, kind: rec.kind, title: rec.title },
+    });
+  });
+  return rec;
+}
+
+export async function deleteNote(id) {
+  const n = byId('notes', id);
+  if (!n) return;
+  await write(async (w) => {
+    await w.del('notes', id);
+    await w.audit({ action: 'Kundennotiz gelöscht', entity: 'notes', entityId: id, label: customerName(byId('customers', n.customerId)), prev: n });
+  });
+}
+
+/* ---------- Termine ---------- */
+
+const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
+// Ändert sich etwas, das in der Kalenderdatei steht, zählt die Fassung hoch – so ersetzt eine neue Datei die alte.
+const ICS_FIELDS = ['date', 'start', 'end', 'timeZone', 'title', 'kind', 'meetingProvider', 'meetingUrl', 'meetingDetails', 'location', 'agenda', 'status'];
+
+export async function saveAppointment(appt) {
+  if (!byId('companies', appt.companyId)) fail('Bitte das Unternehmen wählen, über das der Termin läuft.');
+  if (!plausibleDate(appt.date)) fail('Bitte ein gültiges Datum eintragen.');
+  if (!HHMM.test(appt.start || '') || !HHMM.test(appt.end || '')) fail('Bitte Beginn und Ende als Uhrzeit eintragen.');
+  if (appt.end <= appt.start) fail('Das Ende liegt vor dem Beginn.');
+  const customer = byId('customers', appt.customerId);
+  if (!customer && !String(appt.contactName || '').trim() && !String(appt.title || '').trim()) {
+    fail('Bitte einen Kunden wählen oder einen Gesprächspartner bzw. Titel eintragen.');
+  }
+  const before = byId('appointments', appt.id);
+  const rec = touch({ ...appt, title: String(appt.title || '').trim() || (customer ? `Termin mit ${customerName(customer)}` : String(appt.contactName || '').trim()) });
+  if (before && ICS_FIELDS.some((k) => JSON.stringify(before[k] ?? '') !== JSON.stringify(rec[k] ?? ''))) {
+    rec.sequence = (Number(before.sequence) || 0) + 1;
+  }
+  const d = diffFields(before, rec, ['updatedAt', 'createdAt', 'sequence']);
+  await write(async (w) => {
+    await w.put('appointments', rec);
+    await w.audit({
+      action: before ? 'Termin geändert' : 'Termin angelegt', entity: 'appointments', entityId: rec.id,
+      label: `${rec.date} ${rec.start}, ${rec.title}`,
+      prev: before ? d.prev : null, next: before ? d.next : { date: rec.date, start: rec.start, title: rec.title },
+    });
+  });
+  return rec;
+}
+
+/** Termin abschließen oder absagen; `outcome` ist die Dokumentation zum Termin. */
+export async function setAppointmentStatus(id, status, outcome) {
+  const a = byId('appointments', id);
+  if (!a) fail('Termin nicht gefunden.');
+  if (!['planned', 'done', 'cancelled'].includes(status)) fail('Unbekannter Status.');
+  const rec = touch({ ...a, status, outcome: outcome != null ? String(outcome).trim() : a.outcome });
+  if (status !== a.status) rec.sequence = (Number(a.sequence) || 0) + 1;
+  await write(async (w) => {
+    await w.put('appointments', rec);
+    await w.audit({
+      action: status === 'done' ? 'Termin dokumentiert' : status === 'cancelled' ? 'Termin abgesagt' : 'Termin wieder geplant',
+      entity: 'appointments', entityId: id, label: `${a.date} ${a.start}, ${a.title}`,
+      prev: { status: a.status, outcome: a.outcome || '' }, next: { status, outcome: rec.outcome || '' },
+    });
+  });
+  return rec;
+}
+
+export async function deleteAppointment(id) {
+  const a = byId('appointments', id);
+  if (!a) return;
+  await write(async (w) => {
+    await w.del('appointments', id);
+    await w.audit({ action: 'Termin gelöscht', entity: 'appointments', entityId: id, label: `${a.date} ${a.start}, ${a.title}`, prev: a });
   });
 }
 

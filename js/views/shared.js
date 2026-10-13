@@ -3,14 +3,14 @@
 import { html } from '../ui/core.js';
 import { Badge, CompanyDot } from '../ui/components.js';
 import { state, byId, paymentsOf, currentCompany } from '../lib/store.js';
-import { invoiceStatus, quoteStatus, openCents, toUSD, toEUR } from '../lib/calc.js';
+import { invoiceStatus, quoteStatus, openCents, toUSD, toEUR, convertCents } from '../lib/calc.js';
 import { INVOICE_STATUS, QUOTE_STATUS, customerName } from '../lib/schema.js';
 import { money } from '../lib/format.js';
 import { todayISO } from '../lib/util.js';
 
 export const storeData = () => ({
   invoices: state.invoices, quotes: state.quotes, payments: state.payments, expenses: state.expenses,
-  customers: state.customers, companies: state.companies, services: state.services,
+  customers: state.customers, companies: state.companies, services: state.services, recurring: state.recurring,
 });
 
 export const scopeCompanyId = () => { const c = currentCompany(); return c ? c.id : null; };
@@ -30,11 +30,31 @@ export function QuoteBadge({ quote }) {
   return html`<${Badge} tone=${def.tone}>${def.label}<//>`;
 }
 
-/** Betrag in USD mit EUR als Zweitzeile – die Standarddarstellung für Summen im Tool. */
+/* ---------- Anzeigewährung ----------
+ * Alle Auswertungen rechnen jeden Beleg mit seinem eigenen Kurs in USD und EUR um. Welche der beiden
+ * Währungen vorne steht, wählt der Umschalter oben rechts; die andere steht als Zweitwert daneben. */
+export const CUR = () => (state.settings.displayCurrency === 'EUR' ? 'EUR' : 'USD');
+export const ALT = () => (CUR() === 'USD' ? 'EUR' : 'USD');
+/** Wert eines Auswertungsobjekts in der Anzeigewährung: pick(o) liest o.usd/o.eur, pick(o, 'net') liest o.netUSD/o.netEUR. */
+export const pick = (o, base = '', cur = CUR()) => {
+  if (!o) return 0;
+  const v = base ? o[`${base}${cur}`] : o[cur.toLowerCase()];
+  return Number(v) || 0;
+};
+export const pickAlt = (o, base = '') => pick(o, base, ALT());
+/** Betrag in der Anzeigewährung formatieren (bzw. in der Zweitwährung). */
+export const mc = (cents) => money(cents, CUR());
+export const ma = (cents) => money(cents, ALT());
+/** Belegbetrag mit dem Kurs des Belegs in die Anzeigewährung umrechnen. */
+export const toDisp = (cents, currency, fx) => convertCents(cents, currency, CUR(), fx);
+
+/** Betrag in der Anzeigewährung mit der anderen Währung als Zweitzeile. */
 export function Dual({ usd, eur, strong }) {
+  const main = CUR() === 'EUR' ? eur : usd;
+  const other = CUR() === 'EUR' ? usd : eur;
   return html`<span class="dual">
-    <span class=${strong ? 'dual-main strong' : 'dual-main'}>${money(usd, 'USD')}</span>
-    <span class="dual-sub">≈ ${money(eur, 'EUR')}</span>
+    <span class=${strong ? 'dual-main strong' : 'dual-main'}>${mc(main)}</span>
+    <span class="dual-sub">≈ ${ma(other)}</span>
   </span>`;
 }
 

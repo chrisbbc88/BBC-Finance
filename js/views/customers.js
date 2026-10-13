@@ -3,18 +3,23 @@
 import { html, useState, useMemo, useStore, navigate, toast, attempt, ask } from '../ui/core.js';
 import {
   Button, PageHeader, DataTable, SearchInput, Chips, EmptyState, Modal, TextField, TextArea,
-  SelectField, NumberField, Checkbox, Badge, Panel, Stat, KV, Menu,
+  SelectField, NumberField, Checkbox, Badge, Panel, Stat, KV, Menu, DateField as DateFieldLocal,
 } from '../ui/components.js';
 import { state, byId } from '../lib/store.js';
-import { newCustomer, customerName, customerPerson, LANGUAGES, DOC_CURRENCIES } from '../lib/schema.js';
-import { saveCustomer, deleteCustomer, customerInUse, nextCustomerNumber } from '../lib/actions.js';
-import { revenueDocs, receivables } from '../lib/reports.js';
-import { matches, todayISO } from '../lib/util.js';
-import { money, date } from '../lib/format.js';
-import { toUSD, toEUR } from '../lib/calc.js';
 import {
-  storeData, scopeCompanyId, InvoiceBadge, QuoteBadge, DocAmount, CompanyTag,
+  newCustomer, customerName, customerPerson, LANGUAGES, DOC_CURRENCIES, INTERVALS, NOTE_KINDS, newNote, newAppointment, APPOINTMENT_STATUS,
+} from '../lib/schema.js';
+import { saveCustomer, deleteCustomer, customerInUse, nextCustomerNumber, saveNote, deleteNote } from '../lib/actions.js';
+import { revenueDocs, receivables, servicesByCustomer } from '../lib/reports.js';
+import { matches, todayISO } from '../lib/util.js';
+import { money, date, num, unitLabel } from '../lib/format.js';
+import { toUSD, toEUR } from '../lib/calc.js';
+import { activeCompanies } from '../lib/store.js';
+import { Icon } from '../ui/icons.js';
+import {
+  storeData, scopeCompanyId, InvoiceBadge, QuoteBadge, DocAmount, CompanyTag, CUR, ALT, pick, pickAlt, mc, ma,
 } from './shared.js';
+import { AppointmentModal, AppointmentList, sortAppointments, documentAppointment } from './appointments.js';
 
 /* ---------- Formular ---------- */
 
@@ -120,13 +125,15 @@ export function CustomersView() {
   const [editing, setEditing] = useState(null);
   const companyId = scopeCompanyId();
   const stats = useMemo(() => customerStats(companyId), [state.version, companyId]);
+  const services = useMemo(() => servicesByCustomer(storeData(), { companyId }), [state.version, companyId]);
 
   const allTags = useMemo(() => [...new Set(state.customers.flatMap((c) => c.tags || []))].sort((a, b) => a.localeCompare(b, 'de')), [state.version]);
   const rows = state.customers.filter((c) => {
     if (filter === 'active' && c.active === false) return false;
     if (filter === 'inactive' && c.active !== false) return false;
     if (tag && !(c.tags || []).includes(tag)) return false;
-    return matches(q, c.number, c.company, c.firstName, c.lastName, c.contact, c.city, c.country, c.email, (c.tags || []).join(' '));
+    return matches(q, c.number, c.company, c.firstName, c.lastName, c.contact, c.city, c.country, c.email, (c.tags || []).join(' '),
+      (services.get(c.id) || []).map((x) => x.name).join(' '));
   });
 
   const columns = [
@@ -138,19 +145,28 @@ export function CustomersView() {
     },
     { key: 'city', label: 'Ort', sort: (c) => c.city, render: (c) => [c.city, c.country].filter(Boolean).join(', ') },
     {
+      key: 'services', label: 'Leistungen',
+      render: (c) => {
+        const list = services.get(c.id) || [];
+        if (!list.length) return html`<span class="muted-text">–</span>`;
+        return html`<div class="svc-tags">${list.slice(0, 3).map((x) => html`<span class="tag" title=${x.running ? 'Läuft (wiederkehrende Vorlage)' : ''}>${x.running ? '↻ ' : ''}${x.name}</span>`)}
+          ${list.length > 3 && html`<span class="tag muted-text">+${list.length - 3}</span>`}</div>`;
+      },
+    },
+    {
       key: 'tags', label: 'Tags',
       render: (c) => (c.tags || []).map((t) => html`<span class="tag">${t}</span>`),
     },
     {
-      key: 'revenue', label: 'Umsatz', align: 'right', sort: (c) => (stats.get(c.id) || {}).usd || 0,
-      render: (c) => { const s = stats.get(c.id); return s && s.usd ? money(s.usd, 'USD') : html`<span class="muted-text">–</span>`; },
+      key: 'revenue', label: 'Umsatz', align: 'right', sort: (c) => pick(stats.get(c.id)),
+      render: (c) => { const s = stats.get(c.id); return s && pick(s) ? mc(pick(s)) : html`<span class="muted-text">–</span>`; },
     },
     {
-      key: 'open', label: 'Offen', align: 'right', sort: (c) => (stats.get(c.id) || {}).openUSD || 0,
+      key: 'open', label: 'Offen', align: 'right', sort: (c) => pick(stats.get(c.id), 'open'),
       render: (c) => {
         const s = stats.get(c.id);
-        if (!s || !s.openUSD) return html`<span class="muted-text">–</span>`;
-        return html`<span class=${s.overdueUSD ? 'tone-bad' : ''}>${money(s.openUSD, 'USD')}</span>`;
+        if (!s || !pick(s, 'open')) return html`<span class="muted-text">–</span>`;
+        return html`<span class=${pick(s, 'overdue') ? 'tone-bad' : ''}>${mc(pick(s, 'open'))}</span>`;
       },
     },
     { key: 'status', label: '', render: (c) => (c.active === false ? html`<${Badge} tone="mute">Inaktiv<//>` : '') },
@@ -161,7 +177,7 @@ export function CustomersView() {
       <${Button} variant="primary" icon="plus" onClick=${() => setEditing(newCustomer())}>Neuer Kunde<//>
     <//>
     ${state.customers.length > 0 && html`<div class="filters">
-      <${SearchInput} value=${q} onInput=${setQ} placeholder="Name, Nummer, Ort, E-Mail" />
+      <${SearchInput} value=${q} onInput=${setQ} placeholder="Name, Nummer, Ort, E-Mail, Leistung" />
       <${Chips} label="Status" value=${filter} onChange=${setFilter} options=${[
         { id: 'active', label: 'Aktiv' }, { id: 'inactive', label: 'Inaktiv' }, { id: 'all', label: 'Alle' },
       ]} />
@@ -188,6 +204,8 @@ export function CustomerDetailView({ id }) {
   useStore();
   const c = byId('customers', id);
   const [editing, setEditing] = useState(false);
+  const [noteEdit, setNoteEdit] = useState(null);
+  const [apptEdit, setApptEdit] = useState(null);
   if (!c) {
     return html`<${EmptyState} icon="customers" title="Kunde nicht gefunden" text="Dieser Kunde existiert nicht mehr.">
       <${Button} onClick=${() => navigate('/customers')}>Zur Kundenliste<//>
@@ -195,26 +213,19 @@ export function CustomerDetailView({ id }) {
   }
   const today = todayISO();
   const stats = customerStats(null).get(id) || { usd: 0, eur: 0, count: 0, openUSD: 0, openEUR: 0, overdueUSD: 0, overdueEUR: 0, paidUSD: 0, paidEUR: 0 };
+  const svcRows = servicesByCustomer(storeData(), { customerId: id }).get(id) || [];
+  const notes = state.notes.filter((n) => n.customerId === id);
+  const appts = sortAppointments(state.appointments.filter((a) => a.customerId === id));
+  const upcoming = appts.filter((a) => a.status === 'planned' && a.date >= today);
   const invoices = state.invoices.filter((i) => i.customerId === id).sort((a, b) => (a.issueDate < b.issueDate ? 1 : -1));
   const quotes = state.quotes.filter((i) => i.customerId === id).sort((a, b) => (a.issueDate < b.issueDate ? 1 : -1));
   const companyIds = [...new Set([...invoices, ...quotes].map((d) => d.companyId))];
 
-  // Bisher gebuchte Leistungen (aus erstellten Rechnungen)
-  const svc = new Map();
-  for (const inv of invoices) {
-    if (inv.status === 'draft' || inv.status === 'cancelled' || inv.type === 'credit_note') continue;
-    for (const it of inv.items || []) {
-      const key = it.serviceId || `n:${it.name}`;
-      const row = svc.get(key) || { name: it.name, times: 0, last: '' };
-      row.times += 1;
-      if (inv.issueDate > row.last) row.last = inv.issueDate;
-      svc.set(key, row);
-    }
-  }
-  const services = [...svc.values()].sort((a, b) => b.times - a.times);
-
   async function remove() {
-    const ok = await ask({ title: 'Kunde löschen?', text: `${customerName(c)} wird endgültig gelöscht.`, confirmLabel: 'Löschen', danger: true });
+    const extra = notes.length || appts.length
+      ? ` Mitgelöscht werden ${appts.length} ${appts.length === 1 ? 'Termin' : 'Termine'} und ${notes.length} ${notes.length === 1 ? 'Eintrag' : 'Einträge'} der Kundendokumentation.`
+      : '';
+    const ok = await ask({ title: 'Kunde löschen?', text: `${customerName(c)} wird endgültig gelöscht.${extra}`, confirmLabel: 'Löschen', danger: true });
     if (!ok) return;
     const done = await attempt(async () => { await deleteCustomer(id); return true; });
     if (done) { toast('Kunde gelöscht', 'good'); navigate('/customers'); }
@@ -255,14 +266,24 @@ export function CustomerDetailView({ id }) {
     <//>
 
     <div class="stat-row">
-      <${Stat} label="Umsatz gesamt (netto)" value=${money(stats.usd, 'USD')} sub=${`≈ ${money(stats.eur, 'EUR')}, ${stats.count} Rechnungen`} />
-      <${Stat} label="Offene Forderungen" value=${money(stats.openUSD, 'USD')} sub=${`≈ ${money(stats.openEUR, 'EUR')}`} />
-      <${Stat} label="Davon überfällig" value=${money(stats.overdueUSD, 'USD')} tone=${stats.overdueUSD ? 'bad' : ''} sub=${`≈ ${money(stats.overdueEUR, 'EUR')}`} />
-      <${Stat} label="Bezahlt" value=${money(stats.paidUSD, 'USD')} sub=${`≈ ${money(stats.paidEUR, 'EUR')}`} />
+      <${Stat} label="Umsatz gesamt (netto)" value=${mc(pick(stats))} sub=${`≈ ${ma(pickAlt(stats))}, ${stats.count} Rechnungen`} />
+      <${Stat} label="Offene Forderungen" value=${mc(pick(stats, 'open'))} sub=${`≈ ${ma(pickAlt(stats, 'open'))}`} />
+      <${Stat} label="Davon überfällig" value=${mc(pick(stats, 'overdue'))} tone=${pick(stats, 'overdue') ? 'bad' : ''} sub=${`≈ ${ma(pickAlt(stats, 'overdue'))}`} />
+      <${Stat} label="Bezahlt" value=${mc(pick(stats, 'paid'))} sub=${`≈ ${ma(pickAlt(stats, 'paid'))}`} />
     </div>
 
     <div class="split">
       <div class="split-main">
+        <${ServiceOverview} rows=${svcRows} />
+        <${Panel} title="Termine und Dokumentation" action=${html`<div class="panel-head-actions">
+            <${Button} small icon="note" onClick=${() => setNoteEdit(newNote({ customerId: id }))}>Eintrag<//>
+            <${Button} small icon="calendar" onClick=${() => setApptEdit(newApptFor(c))}>Termin planen<//>
+          </div>`}>
+          ${upcoming.length > 0 && html`<h3 class="sub-head">Anstehend</h3>
+            <${AppointmentList} items=${upcoming} onOpen=${setApptEdit} compact />`}
+          <${CustomerTimeline} notes=${notes} appts=${appts.filter((a) => !(a.status === 'planned' && a.date >= today))}
+            onNote=${setNoteEdit} onAppt=${setApptEdit} hasUpcoming=${upcoming.length > 0} />
+        <//>
         <${Panel} title="Rechnungen" flush>
           <${DataTable} columns=${invColumns} rows=${invoices} onRowClick=${(i) => navigate(`/invoices/${i.id}`)}
             empty=${html`<p class="panel-empty">Noch keine Rechnungen für diesen Kunden.</p>`} />
@@ -293,17 +314,127 @@ export function CustomerDetailView({ id }) {
             ? html`<ul class="plain-list">${companyIds.map((cid) => html`<li><${CompanyTag} id=${cid} /></li>`)}</ul>`
             : html`<p class="muted-text">Noch keine Belege.</p>`}
         <//>
-        <${Panel} title="Gebuchte Leistungen">
-          ${services.length
-            ? html`<ul class="plain-list">${services.slice(0, 12).map((s) => html`<li class="row-between">
-                <span>${s.name}</span><span class="muted-text">${s.times}×, zuletzt ${date(s.last)}</span></li>`)}</ul>`
-            : html`<p class="muted-text">Noch keine abgerechneten Leistungen.</p>`}
-        <//>
         <${Panel} title="Interne Notizen">
           ${c.notes ? html`<p class="pre">${c.notes}</p>` : html`<p class="muted-text">Keine Notizen. Über „Bearbeiten“ kannst du welche hinterlegen.</p>`}
         <//>
       </aside>
     </div>
     ${editing && html`<${CustomerFormModal} customer=${c} onClose=${() => setEditing(false)} />`}
+    ${noteEdit && html`<${NoteModal} note=${noteEdit} onClose=${() => setNoteEdit(null)} />`}
+    ${apptEdit && html`<${AppointmentModal} key=${apptEdit.id} appointment=${apptEdit} onClose=${() => setApptEdit(null)} />`}
   `;
+}
+
+/** Neuer Termin für einen Kunden: Unternehmen aus dem Switcher, sonst das, über das zuletzt abgerechnet wurde. */
+function newApptFor(c) {
+  const last = [...state.invoices].filter((i) => i.customerId === c.id).sort((a, b) => (a.issueDate < b.issueDate ? 1 : -1))[0];
+  const company = (scopeCompanyId() && byId('companies', scopeCompanyId())) || (last && byId('companies', last.companyId)) || activeCompanies()[0];
+  return newAppointment(company, {
+    customerId: c.id, attendees: c.email || '', language: c.language || (company && company.language) || 'de',
+  });
+}
+
+/* ---------- Leistungsübersicht ---------- */
+
+function ServiceOverview({ rows }) {
+  const intervalLabel = (id) => (INTERVALS.find((x) => x.id === id) || {}).label || '';
+  return html`<${Panel} title="Leistungsübersicht" flush action=${html`<span class="muted-text small">automatisch aus Rechnungen und wiederkehrenden Vorlagen</span>`}>
+    ${rows.length
+      ? html`<div class="table-wrap"><table class="table table-compact">
+          <thead><tr><th>Leistung</th><th>Über</th><th class="r">Rechnungen</th><th class="r">Menge</th><th class="r">${`Umsatz netto (${CUR()})`}</th><th>Zuletzt</th></tr></thead>
+          <tbody>${rows.map((r) => html`<tr key=${r.key}>
+            <td><div class="cell-main">${r.name}</div>
+              ${r.running && html`<div class="cell-sub svc-running"><${Icon} name="repeat" size=${13} />läuft, ${intervalLabel(r.interval).toLowerCase()}</div>`}
+              ${r.category && html`<div class="cell-sub">${r.category}</div>`}</td>
+            <td>${r.companyIds.map((cid) => html`<div><${CompanyTag} id=${cid} /></div>`)}</td>
+            <td class="r">${r.invoices || '–'}</td>
+            <td class="r">${r.qty ? `${num(r.qty)}${r.unit ? ` ${unitLabel(r.unit, 'de')}` : ''}` : '–'}</td>
+            <td class="r">${pick(r) ? html`${mc(pick(r))}<div class="cell-sub">≈ ${ma(pickAlt(r))}</div>` : '–'}</td>
+            <td>${r.last ? date(r.last) : (r.running ? 'noch nicht abgerechnet' : '–')}</td>
+          </tr>`)}</tbody>
+        </table></div>`
+      : html`<p class="panel-empty">Noch keine abgerechneten Leistungen. Sobald du eine Rechnung für diesen Kunden erstellst, erscheinen ihre Leistungen hier.</p>`}
+  <//>`;
+}
+
+/* ---------- Kundendokumentation ---------- */
+
+const NOTE_ICON = { note: 'note', call: 'phone', email: 'mail', meeting: 'customers', task: 'check' };
+const noteKind = (id) => (NOTE_KINDS.find((k) => k.id === id) || NOTE_KINDS[0]).label;
+
+function CustomerTimeline({ notes, appts, onNote, onAppt, hasUpcoming }) {
+  const entries = [
+    ...notes.map((n) => ({ type: 'note', key: `n-${n.id}`, sort: `${n.date} ${n.createdAt || ''}`, n })),
+    ...appts.map((a) => ({ type: 'appt', key: `a-${a.id}`, sort: `${a.date} ${a.start}`, a })),
+  ].sort((x, y) => (x.sort < y.sort ? 1 : -1));
+  async function removeNote(n) {
+    const ok = await ask({ title: 'Eintrag löschen?', text: 'Der Eintrag wird aus der Kundendokumentation entfernt. Im Protokoll bleibt er erhalten.', confirmLabel: 'Löschen', danger: true });
+    if (!ok) return;
+    const done = await attempt(async () => { await deleteNote(n.id); return true; });
+    if (done) toast('Eintrag gelöscht', 'good');
+  }
+  if (!entries.length) {
+    return hasUpcoming ? null : html`<p class="muted-text">Noch keine Einträge. Halte Telefonate, Gespräche und Vereinbarungen hier fest – oder plane einen Termin.</p>`;
+  }
+  return html`${hasUpcoming && html`<h3 class="sub-head">Verlauf</h3>`}
+    <ol class="timeline-doc">
+    ${entries.map((e) => {
+      if (e.type === 'note') {
+        const n = e.n;
+        return html`<li key=${e.key}>
+          <span class="tl-icon"><${Icon} name=${NOTE_ICON[n.kind] || 'note'} size=${15} /></span>
+          <div>
+            <div class="tl-head"><span class="tl-title">${n.title || noteKind(n.kind)}</span>
+              <span class="tl-meta">${noteKind(n.kind)} · ${date(n.date)}</span>${n.companyId && html`<${CompanyTag} id=${n.companyId} />`}</div>
+            ${n.text && html`<div class="tl-text">${n.text}</div>`}
+          </div>
+          <div class="tl-actions">
+            <${Button} variant="ghost" small icon="edit" title="Eintrag bearbeiten" onClick=${() => onNote(n)} />
+            <${Button} variant="ghost" small icon="trash" title="Eintrag löschen" onClick=${() => removeNote(n)} />
+          </div>
+        </li>`;
+      }
+      const a = e.a;
+      const st = APPOINTMENT_STATUS[a.status] || APPOINTMENT_STATUS.planned;
+      const missingDoc = a.status === 'planned';
+      return html`<li key=${e.key}>
+        <span class="tl-icon"><${Icon} name="calendar" size=${15} /></span>
+        <div>
+          <div class="tl-head"><span class="tl-title">${a.title}</span>
+            <span class="tl-meta">Termin · ${date(a.date)}, ${a.start} Uhr</span>
+            <${Badge} tone=${missingDoc ? 'warn' : st.tone}>${missingDoc ? 'Nicht dokumentiert' : st.label}<//>
+            <${CompanyTag} id=${a.companyId} /></div>
+          ${a.outcome ? html`<div class="tl-text">${a.outcome}</div>` : (a.agenda && html`<div class="tl-text muted-text">${a.agenda}</div>`)}
+        </div>
+        <div class="tl-actions">
+          ${missingDoc && html`<${Button} small onClick=${() => documentAppointment(a)}>Dokumentieren<//>`}
+          <${Button} variant="ghost" small icon="edit" title="Termin öffnen" onClick=${() => onAppt(a)} />
+        </div>
+      </li>`;
+    })}
+  </ol>`;
+}
+
+export function NoteModal({ note, onClose }) {
+  const isNew = !byId('notes', note.id);
+  const [n, setN] = useState(() => ({ ...note }));
+  const [busy, setBusy] = useState(false);
+  const set = (k) => (v) => setN((p) => ({ ...p, [k]: v }));
+  async function submit() {
+    setBusy(true);
+    const saved = await attempt(() => saveNote(n));
+    setBusy(false);
+    if (saved) { toast(isNew ? 'Eintrag gespeichert' : 'Eintrag geändert', 'good'); onClose(); }
+  }
+  return html`<${Modal} title=${isNew ? 'Neuer Eintrag' : 'Eintrag bearbeiten'} onClose=${onClose} onSubmit=${submit}
+    footer=${html`<${Button} onClick=${onClose}>Abbrechen<//><${Button} variant="primary" type="submit" busy=${busy}>Speichern<//>`}>
+    <div class="form-grid">
+      <${SelectField} class="span-2" label="Art" value=${n.kind} onChange=${set('kind')} options=${NOTE_KINDS} />
+      <${DateFieldLocal} class="span-2" label="Datum" value=${n.date} onInput=${set('date')} />
+      <${SelectField} class="span-2" label="Unternehmen" value=${n.companyId} onChange=${set('companyId')} placeholder="Ohne Zuordnung"
+        options=${activeCompanies().map((x) => ({ id: x.id, label: x.name }))} />
+      <${TextField} class="span-6" label="Betreff" value=${n.title} onInput=${set('title')} placeholder="z. B. Rückruf wegen Angebot" />
+      <${TextArea} class="span-6" label="Notiz" value=${n.text} onInput=${set('text')} rows=${6} />
+    </div>
+  <//>`;
 }

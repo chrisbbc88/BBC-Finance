@@ -25,6 +25,17 @@ Empfehlung: dem Repository unter *Settings → Pages → Custom domain* eine eig
 
 Die Daten hängen an der Adresse. Wer später die Adresse wechselt, nimmt sie per Backup-Datei mit – deshalb am besten vor dem Start entscheiden.
 
+## Update einspielen, ohne Daten zu verlieren
+
+Deine Daten liegen im Browser, nicht in den Programmdateien. Ein Update ersetzt nur die Dateien – die Daten bleiben.
+
+1. **Backup laden** (Knopf oben rechts). Nur zur Sicherheit.
+2. **Alle Tabs mit BBC Finance schließen.**
+3. **Dateien ersetzen** – im selben Ordner bzw. im selben GitHub-Repository. Nicht in einen neuen Ordner entpacken und nicht an eine andere Adresse hochladen, sonst sieht der Browser einen anderen Speicher.
+4. **Tool öffnen.** Nach einem Update meldet es einmal, wie viele Rechnungen, Kunden und Ausgaben übernommen wurden.
+
+Neue Funktionen legen beim ersten Start nur zusätzliche, leere Sammlungen an; bestehende Sammlungen werden nicht angefasst. Backups älterer Versionen lassen sich jederzeit einspielen. Ein Backup der neuen Version lehnt eine ältere Version dagegen ab, statt die neuen Daten stillschweigend wegzulassen.
+
 ## Was man wissen muss
 
 | Thema | So ist es gelöst |
@@ -38,6 +49,7 @@ Die Daten hängen an der Adresse. Wer später die Adresse wechselt, nimmt sie pe
 | **Wechselkurse** | Frankfurter-API (Referenzkurse der Zentralbanken, ohne Key), Ausweichquelle open.er-api.com. Der Kurs wird beim Erstellen am Beleg festgeschrieben. |
 | **Belegerkennung** | Anthropic-API direkt aus dem Browser, mit eigenem Key aus *Einstellungen*. Der Key liegt nur im Browser und steht nie im Backup. |
 | **E-Mail** | Das Tool bereitet PDF, Betreff und Text vor und öffnet das E-Mail-Programm. Es verschickt nichts selbst. |
+| **Termine** | Kalenderdatei nach RFC 5545 (UTC-Zeiten, eindeutige ID). Eine geänderte Fassung desselben Termins ersetzt beim Empfänger die alte. Keine Synchronisation mit Outlook oder Google – die Datei wird geöffnet oder angehängt. |
 
 Backup-Dateien nie ins Repository legen – `.gitignore` schließt sie vorsorglich aus.
 
@@ -53,6 +65,10 @@ Backup-Dateien nie ins Repository legen – `.gitignore` schließt sie vorsorgli
 - **Korrigieren mit neuer Nummer**: stornieren (ohne Zahlungen) oder Gutschrift erstellen, dann *Als neue Rechnung kopieren*.
 - Ob eine bereits verschickte Rechnung geändert oder gelöscht werden darf oder storniert werden muss, hängt von den Regeln ab, die für das jeweilige Unternehmen gelten. Das Tool lässt alle Wege zu und schreibt keinen davon vor.
 - **Belege**: unter *Ausgaben* Fotos oder PDFs hineinziehen. Sie landen unter *Zu prüfen*, werden ausgelesen und erst nach deiner Bestätigung gebucht.
+- **Anzeigewährung**: Der Umschalter **USD | EUR** oben rechts stellt Dashboard, Finanzübersicht, Reports, Kunden- und Listensummen auf die gewählte Währung um; die andere steht als Zweitwert daneben. Jeder Beleg wird dabei mit seinem eigenen, gespeicherten Kurs umgerechnet. Belege selbst bleiben in ihrer Währung.
+- **Leistungsübersicht beim Kunden**: entsteht automatisch aus den erstellten Rechnungen (Gutschriften abgezogen) und aus aktiven wiederkehrenden Vorlagen („läuft, monatlich“). In der Kundenliste zeigt die Spalte *Leistungen* die wichtigsten; die Suche findet Kunden auch über ihre Leistungen.
+- **Kundendokumentation**: im Kundenprofil unter *Termine und Dokumentation* – Notizen, Telefonate, E-Mails, Gespräche, Aufgaben mit Datum und optional dem Unternehmen. Abgeschlossene Termine erscheinen dort mit ihrem Ergebnis.
+- **Termine**: unter *Termine* (Kalender und Liste) oder beim Kunden über *Termin planen*. Das gewählte Unternehmen bestimmt Meeting-Dienst, Link, Zugangsdaten, Zeitzone und Absender – einzutragen unter *Unternehmen → Termine und Meetings*. Nach dem Anlegen erscheint die Einladung: Text (Vorlage unter *Einstellungen*, Deutsch oder Englisch je nach Kunde), Kalenderdatei (.ics) mit Datum, Uhrzeit, Link und Text, Übergabe an das E-Mail-Programm. Nach dem Termin: *Termin dokumentieren*.
 - **Wiederkehrend**: Vorlage mit Intervall anlegen; fällige Vorlagen erscheinen im Dashboard und erzeugen per Klick einen Rechnungsentwurf.
 - **Zahlungserinnerungen**: überfällige Rechnungen zeigen die fällige Stufe (Tage und Texte in *Einstellungen*).
 
@@ -88,7 +104,8 @@ js/lib/               Fachlogik – ohne Oberfläche, einzeln testbar
   ai.js, files.js     Belegerkennung, Datei-Aufbereitung
   backup.js           Export und Wiederherstellung
 js/ui/                Bausteine, Diagramme, Belegvorschau
-js/views/             eine Datei je Ansicht
+  calendar.js         Zeitzonen, Einladungstext, Kalenderdatei
+js/views/             eine Datei je Ansicht (appointments.js: Kalender und Termine)
 js/vendor/            Preact + htm, pdfmake, SheetJS (lokal eingebunden, kein CDN)
 tests/                Unit-Tests der Fachlogik
 ```
@@ -122,6 +139,8 @@ Jede Sammlung ist ein IndexedDB-Store und entspricht einer Tabelle. Bei einem sp
 | `expenses` | Ausgaben mit Beträgen, Währung, Kurs | → `companies`, → `attachments` |
 | `attachments` / `blobs` | Belegdateien: Metadaten / Inhalt | ← `expenses` |
 | `recurring` | Vorlagen für wiederkehrende Rechnungen | → `companies`, → `customers` |
+| `appointments` | Termine: Zeit, Zeitzone, Art, Meeting-Link, Agenda, Status, Ergebnis | → `companies` (genau eines), → `customers` (optional) |
+| `notes` | Kundendokumentation: Notizen, Telefonate, E-Mails, Gespräche, Aufgaben | → `customers`, → `companies` (optional) |
 | `counters` | Zählerstand je Unternehmen, Belegart und Zeitraum | → `companies` |
 | `rates` | geladene Wechselkurse | – |
 | `settings` | Einstellungen dieses Browsers | – |
@@ -142,13 +161,14 @@ Positionen liegen im Beleg (`items`), weil ein Beleg immer als Ganzes gelesen un
 node --test tests/core.test.mjs tests/reports.test.mjs
 ```
 
-32 Tests für Geldrechnung, Nummernkreise, Status, Datumsrechnung, Auswertungen, Kursquellen, Belegerkennung, Export und Backup-Prüfung. Die Abläufe im Browser (Rechnung von der Eingabe bis zur PDF, zurück in den Entwurf und neu erstellen, Zahlungen berichtigen, Klärungsvermerk, Storno und Gutschrift zurücknehmen, Rechnung löschen mit Freigabe der Nummer, Angebot → Rechnung, Storno, Gutschrift, Belege, Backup und Wiederherstellung, zwei Tabs gleichzeitig) wurden mit einem ferngesteuerten Chromium durchgespielt – über einen Webserver und direkt von der Festplatte geöffnet. In Safari wurde nicht getestet.
+32 Tests für Geldrechnung, Nummernkreise, Status, Datumsrechnung, Auswertungen, Kursquellen, Belegerkennung, Export und Backup-Prüfung. Die Abläufe im Browser (Rechnung von der Eingabe bis zur PDF, zurück in den Entwurf und neu erstellen, Zahlungen berichtigen, Klärungsvermerk, Storno und Gutschrift zurücknehmen, Rechnung löschen mit Freigabe der Nummer, Termine mit Einladung und Kalenderdatei, Kundendokumentation, Leistungsübersicht, Währungsumschalter, Update einer bestehenden Datenbank ohne Datenverlust, Angebot → Rechnung, Storno, Gutschrift, Belege, Backup und Wiederherstellung, zwei Tabs gleichzeitig) wurden mit einem ferngesteuerten Chromium durchgespielt – über einen Webserver und direkt von der Festplatte geöffnet. In Safari wurde nicht getestet.
 
 ## Grenzen dieser Version
 
 - Kein Login, keine Rollen, kein Steuerberater-Zugang, keine gemeinsamen Daten über Geräte hinweg.
 - Kein E-Mail-Versand aus dem Tool, keine automatischen Erinnerungen, kein automatisches Anlegen wiederkehrender Rechnungen – das Tool zeigt, was fällig ist, ausgelöst wird per Klick.
 - Gutschriften nur über den vollen Rechnungsbetrag.
+- Termine: keine Synchronisation mit Outlook, Google oder Teams und keine Einladung im Namen des Tools – Kalenderdatei und Text gehen über dein eigenes E-Mail-Programm. Keine Serientermine.
 - Eine offene Differenz lässt sich vermerken, aber nicht ausbuchen: Die Rechnung bleibt teilbezahlt, bis der Rest als Zahlung eingetragen ist.
 - Die PDF-Schrift kennt lateinische, griechische und kyrillische Zeichen. Andere Schriften blockieren das Erstellen mit einem Hinweis.
 - Die Vorschau zeigt den Beleg als eine fortlaufende Seite; Seitenumbrüche entstehen erst im PDF.

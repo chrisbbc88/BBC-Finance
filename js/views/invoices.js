@@ -15,11 +15,11 @@ import {
 import { removeInvoice } from './invoice-actions.js';
 import { docDefinition, pdfBlob, saveBlob } from '../lib/pdf.js';
 import { buildDocModel } from '../lib/docmodel.js';
-import { sumPayments, toUSD } from '../lib/calc.js';
+import { sumPayments } from '../lib/calc.js';
 import { money, date, dateTime, rate } from '../lib/format.js';
 import { matches, todayISO, toISODate, periodRange, inRange, PERIODS, daysBetween } from '../lib/util.js';
 import {
-  statusOf, InvoiceBadge, DocAmount, CompanyTag, customerLabel, invoiceOpen,
+  statusOf, InvoiceBadge, DocAmount, CompanyTag, customerLabel, invoiceOpen, CUR, mc, toDisp,
 } from './shared.js';
 import { SendModal, downloadDoc, reminderDueLevel, lastReminder } from './send.js';
 
@@ -56,8 +56,8 @@ export function InvoicesView({ params }) {
   const sums = rows.reduce((a, r) => {
     if (r.status === 'draft' || r.status === 'cancelled') return a;
     const t = r.inv.totals ? r.inv.totals.totalCents : 0;
-    a.total += toUSD(t, r.inv.currency, r.inv.fx) || 0;
-    a.open += toUSD(invoiceOpen(r.inv), r.inv.currency, r.inv.fx) || 0;
+    a.total += toDisp(t, r.inv.currency, r.inv.fx) || 0;
+    a.open += toDisp(invoiceOpen(r.inv), r.inv.currency, r.inv.fx) || 0;
     return a;
   }, { total: 0, open: 0 });
 
@@ -75,9 +75,9 @@ export function InvoicesView({ params }) {
         ? html`<span class="tone-bad">${date(r.inv.dueDate)}</span><div class="cell-sub">seit ${daysBetween(r.inv.dueDate, today)} Tagen</div>`
         : date(r.inv.dueDate)),
     },
-    { key: 'total', label: 'Betrag', align: 'right', sort: (r) => toUSD(r.inv.totals ? r.inv.totals.totalCents : 0, r.inv.currency, r.inv.fx) || 0, render: (r) => html`<${DocAmount} doc=${r.inv} />` },
+    { key: 'total', label: 'Betrag', align: 'right', sort: (r) => toDisp(r.inv.totals ? r.inv.totals.totalCents : 0, r.inv.currency, r.inv.fx) || 0, render: (r) => html`<${DocAmount} doc=${r.inv} />` },
     {
-      key: 'open', label: 'Offen', align: 'right', sort: (r) => toUSD(invoiceOpen(r.inv), r.inv.currency, r.inv.fx) || 0,
+      key: 'open', label: 'Offen', align: 'right', sort: (r) => toDisp(invoiceOpen(r.inv), r.inv.currency, r.inv.fx) || 0,
       render: (r) => { const o = invoiceOpen(r.inv); return o ? money(o, r.inv.currency) : html`<span class="muted-text">–</span>`; },
     },
     { key: 'status', label: 'Status', sort: (r) => r.status, render: (r) => html`<${InvoiceBadge} inv=${r.inv} />` },
@@ -95,7 +95,7 @@ export function InvoicesView({ params }) {
 
   const footer = rows.length ? [
     `${rows.length} ${rows.length === 1 ? 'Beleg' : 'Belege'}`, '', ...(showCompany ? [''] : []), '', '',
-    html`<span class="strong">${money(sums.total, 'USD')}</span>`, html`<span class="strong">${money(sums.open, 'USD')}</span>`, html`<span class="muted-text">in USD</span>`,
+    html`<span class="strong">${mc(sums.total)}</span>`, html`<span class="strong">${mc(sums.open)}</span>`, html`<span class="muted-text">in ${CUR()}</span>`,
     ...(group === 'overdue' ? [''] : []),
   ] : null;
 

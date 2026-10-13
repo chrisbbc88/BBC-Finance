@@ -18,7 +18,7 @@ import {
   matches, todayISO, nowISO, periodRange, inRange, PERIODS, isISODate, fileSize, clone,
 } from '../lib/util.js';
 import { saveBlob } from '../lib/pdf.js';
-import { CompanyTag } from './shared.js';
+import { CompanyTag, CUR, mc, toDisp } from './shared.js';
 
 /* ---------- KI-Lauf ---------- */
 
@@ -355,9 +355,9 @@ export function ExpensesView() {
     .filter((e) => matches(q, e.vendor, e.description, e.invoiceNumber, e.category, e.note, (e.totalCents / 100).toFixed(2), (e.totalCents / 100).toFixed(2).replace('.', ',')));
   const cats = [...new Set(booked.map((e) => e.category).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'de'));
   const sums = rows.reduce((a, e) => {
-    a.net += toUSD(e.netCents, e.currency, e.fx) || 0;
-    a.tax += toUSD(e.taxCents, e.currency, e.fx) || 0;
-    a.total += toUSD(e.totalCents, e.currency, e.fx) || 0;
+    a.net += toDisp(e.netCents, e.currency, e.fx) || 0;
+    a.tax += toDisp(e.taxCents, e.currency, e.fx) || 0;
+    a.total += toDisp(e.totalCents, e.currency, e.fx) || 0;
     return a;
   }, { net: 0, tax: 0, total: 0 });
 
@@ -393,19 +393,19 @@ export function ExpensesView() {
       key: 'file', label: 'Beleg',
       render: (e) => ((e.attachmentIds || []).length ? html`<span class="has-file" title="Beleg vorhanden"><${Icon} name="file" size=${16} /></span>` : html`<span class="muted-text">–</span>`),
     },
-    { key: 'net', label: 'Netto', align: 'right', sort: (e) => toUSD(e.netCents, e.currency, e.fx) || 0, render: (e) => money(e.netCents, e.currency) },
+    { key: 'net', label: 'Netto', align: 'right', sort: (e) => toDisp(e.netCents, e.currency, e.fx) || 0, render: (e) => money(e.netCents, e.currency) },
     { key: 'tax', label: 'Steuer', align: 'right', render: (e) => (e.taxCents ? money(e.taxCents, e.currency) : html`<span class="muted-text">–</span>`) },
     {
-      key: 'total', label: 'Gesamt', align: 'right', sort: (e) => toUSD(e.totalCents, e.currency, e.fx) || 0,
+      key: 'total', label: 'Gesamt', align: 'right', sort: (e) => toDisp(e.totalCents, e.currency, e.fx) || 0,
       render: (e) => html`<span class="dual"><span class="dual-main">${money(e.totalCents, e.currency)}</span>
-        ${e.currency !== 'USD' && html`<span class="dual-sub">≈ ${money(toUSD(e.totalCents, e.currency, e.fx), 'USD')}</span>`}</span>`,
+        ${e.currency !== CUR() && toDisp(e.totalCents, e.currency, e.fx) != null && html`<span class="dual-sub">≈ ${mc(toDisp(e.totalCents, e.currency, e.fx))}</span>`}</span>`,
     },
     { key: 'paid', label: 'Bezahlt am', sort: (e) => e.paymentDate || '', render: (e) => (e.paymentDate ? date(e.paymentDate) : html`<span class="muted-text">offen</span>`) },
   ];
   const footer = rows.length ? [
     `${rows.length} ${rows.length === 1 ? 'Ausgabe' : 'Ausgaben'}`, '', '', ...(showCompany ? [''] : []), '',
-    html`<span class="strong">${money(sums.net, 'USD')}</span>`, html`<span class="strong">${money(sums.tax, 'USD')}</span>`,
-    html`<span class="strong">${money(sums.total, 'USD')}</span>`, html`<span class="muted-text">in USD</span>`,
+    html`<span class="strong">${mc(sums.net)}</span>`, html`<span class="strong">${mc(sums.tax)}</span>`,
+    html`<span class="strong">${mc(sums.total)}</span>`, html`<span class="muted-text">in ${CUR()}</span>`,
   ] : null;
 
   return html`

@@ -2,16 +2,16 @@
 
 import {
   html, render, useState, useEffect, useRef, useMemo, useStore, useRoute, navigate, toast, attempt, hasNavGuard, showError,
-  unloadWarningPaused,
+  unloadWarningPaused, pauseUnloadWarning,
 } from './ui/core.js';
 import { useErrorBoundary } from './vendor/preact-htm.js';
 import { Icon } from './ui/icons.js';
-import { Button, DialogHost, ToastHost, EmptyState } from './ui/components.js';
+import { Button, DialogHost, ToastHost, EmptyState, Segmented } from './ui/components.js';
 import {
   state, load, byId, activeCompanies, currentCompany, setSetting, assetUrl,
 } from './lib/store.js';
 import { firstRun } from './lib/seed.js';
-import { customerName } from './lib/schema.js';
+import { customerName, APP_VERSION } from './lib/schema.js';
 import { matches, parseNum, norm } from './lib/util.js';
 import { money } from './lib/format.js';
 
@@ -27,6 +27,7 @@ import { FinanceView, ReportsView } from './views/reports.js';
 import { CompaniesView, CompanyEditView } from './views/companies.js';
 import { SettingsView, downloadBackup } from './views/settings.js';
 import { AuditView } from './views/audit.js';
+import { AppointmentsView } from './views/appointments.js';
 
 const NAV = [
   [{ path: '/', label: 'Dashboard', icon: 'dashboard', exact: true }],
@@ -37,6 +38,7 @@ const NAV = [
   ],
   [
     { path: '/customers', label: 'Kunden', icon: 'customers' },
+    { path: '/appointments', label: 'Termine', icon: 'calendar' },
     { path: '/services', label: 'Leistungen', icon: 'services' },
   ],
   [
@@ -123,6 +125,10 @@ function searchAll(q) {
       key: i.id, label: `${i.number || 'Entwurf'}, ${custName(i) || 'ohne Kunde'}`,
       sub: money(i.totals ? i.totals.totalCents : 0, i.currency), href: i.status === 'draft' ? `/quotes/${i.id}/edit` : `/quotes/${i.id}`,
     })));
+  add('Termine', state.appointments
+    .filter((a) => matches(q, a.title, a.contactName, custName(a), a.agenda, a.outcome))
+    .sort((a, b) => (`${a.date}${a.start}` < `${b.date}${b.start}` ? 1 : -1))
+    .map((a) => ({ key: a.id, label: a.title, sub: `${a.date.split('-').reverse().join('.')}, ${a.start} Uhr`, href: `/appointments?open=${a.id}` })));
   add('Leistungen', state.services
     .filter((s) => matches(q, s.name, s.internalName, s.category, s.description))
     .map((s) => ({ key: s.id, label: s.name, sub: money(s.priceCents, s.currency), href: '/services' })));
@@ -191,6 +197,16 @@ function GlobalSearch() {
   </div>`;
 }
 
+/* ---------- Anzeigewährung ---------- */
+
+function CurrencyToggle() {
+  const cur = state.settings.displayCurrency === 'EUR' ? 'EUR' : 'USD';
+  return html`<div class="cur-toggle" title="Anzeigewährung für Dashboard, Finanzübersicht und Reports">
+    <${Segmented} label="Anzeigewährung" value=${cur} onChange=${(v) => attempt(() => setSetting('displayCurrency', v))}
+      options=${[{ id: 'USD', label: 'USD' }, { id: 'EUR', label: 'EUR' }]} />
+  </div>`;
+}
+
 /* ---------- Backup-Knopf ---------- */
 
 function BackupButton() {
@@ -229,6 +245,7 @@ function Route({ route }) {
     return html`<${QuoteDetailView} id=${b} />`;
   }
   if (a === 'customers') return b ? html`<${CustomerDetailView} id=${b} />` : html`<${CustomersView} />`;
+  if (a === 'appointments') return html`<${AppointmentsView} params=${p} />`;
   if (a === 'services') return html`<${ServicesView} />`;
   if (a === 'expenses') return html`<${ExpensesView} />`;
   if (a === 'recurring') return html`<${RecurringView} />`;
@@ -279,6 +296,13 @@ function App() {
     return () => window.removeEventListener('beforeunload', onUnload);
   }, []);
 
+  const [replaced, setReplaced] = useState(false);
+  useEffect(() => {
+    const on = () => setReplaced(true);
+    window.addEventListener('bbc-db-replaced', on);
+    return () => window.removeEventListener('bbc-db-replaced', on);
+  }, []);
+
   const isActive = (item) => (item.exact ? route.path === item.path : route.path === item.path || route.path.startsWith(`${item.path}/`));
   const reviewCount = state.expenses.filter((e) => e.status === 'review').length;
 
@@ -309,10 +333,15 @@ function App() {
           <${CompanySwitcher} />
           <${GlobalSearch} />
           <div class="topbar-actions">
+            <${CurrencyToggle} />
             <${BackupButton} />
             <${Button} variant="primary" icon="plus" onClick=${() => navigate('/invoices/new')}>Neue Rechnung<//>
           </div>
         </header>
+        ${replaced && html`<div class="demo-strip replaced-strip" role="alert">
+          In einem anderen Tab wurde eine neuere Fassung von BBC Finance geöffnet. Bitte diesen Tab neu laden, bevor du weiterarbeitest.
+          <button type="button" class="link-btn" onClick=${() => { pauseUnloadWarning(); location.reload(); }}>Jetzt neu laden</button>
+        </div>`}
         ${state.settings.demoLoaded && html`<div class="demo-strip">
           Im Tool sind Beispieldaten geladen. <a href="#/settings">In den Einstellungen entfernen</a>
         </div>`}
@@ -365,6 +394,21 @@ async function boot() {
   }
   root.innerHTML = '';
   render(html`<${App} />`, root);
+  announceUpdate();
+}
+
+/**
+ * Nach einem Update einmal bestätigen, dass der Datenbestand vollständig übernommen wurde.
+ * Beim allerersten Start (noch keine Daten) wird die Version still vermerkt.
+ */
+async function announceUpdate() {
+  if (state.settings.appVersion === APP_VERSION) return;
+  const n = { invoices: state.invoices.length, customers: state.customers.length, expenses: state.expenses.length, quotes: state.quotes.length };
+  const hasData = n.invoices + n.customers + n.expenses + n.quotes > 0;
+  try { await setSetting('appVersion', APP_VERSION); } catch (_) { /* nicht kritisch */ }
+  if (hasData && !state.settings.demoLoaded) {
+    toast(`BBC Finance wurde aktualisiert. Alle Daten sind übernommen: ${n.invoices} Rechnungen, ${n.quotes} Angebote, ${n.customers} Kunden, ${n.expenses} Ausgaben. Neu: Termine, Kundendokumentation, Leistungsübersicht und der USD/EUR-Umschalter oben rechts.`, 'good', 15000);
+  }
 }
 
 window.addEventListener('unhandledrejection', (e) => { if (e.reason) showError(e.reason); });

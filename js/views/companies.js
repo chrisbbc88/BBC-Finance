@@ -7,7 +7,7 @@ import {
   Button, PageHeader, Panel, TextField, TextArea, SelectField, NumberField, Checkbox, EmptyState, Badge, Notice, Field, NumberInput, Menu,
 } from '../ui/components.js';
 import { state, byId, assetUrl } from '../lib/store.js';
-import { newCompany, DOC_CURRENCIES, LANGUAGES } from '../lib/schema.js';
+import { newCompany, DOC_CURRENCIES, LANGUAGES, MEETING_PROVIDERS, TIME_ZONES, deviceTimeZone } from '../lib/schema.js';
 import { saveCompany, archiveCompany, deleteCompany, companyInUse, peekNumber, setCounter } from '../lib/actions.js';
 import { validatePattern, numberingOf, counterKey } from '../lib/numbering.js';
 import { prepareLogo } from '../lib/files.js';
@@ -255,6 +255,22 @@ export function CompanyEditView({ id }) {
           <div class="span-6"><${Checkbox} label="Gesamtbetrag zusätzlich in der Zweitwährung zeigen" checked=${c.showSecondary} onChange=${set('showSecondary')}
             hint="USD-Belege zeigen den Betrag auch in EUR und umgekehrt" /></div>
           <div class="span-6"><${Checkbox} label="Verwendeten Wechselkurs auf dem Beleg nennen" checked=${c.showFxNote !== false} onChange=${set('showFxNote')} /></div>
+        </div>
+      <//>
+
+      <${Panel} title="Termine und Meetings">
+        <p class="panel-intro">Standard für neue Termine über dieses Unternehmen. Der Link und die Zugangsdaten stehen dann automatisch in der Einladung und in der Kalenderdatei; im einzelnen Termin lässt sich alles ändern.</p>
+        <div class="form-grid">
+          <${SelectField} class="span-2" label="Meeting-Dienst" value=${c.meetingProvider || ''} onChange=${set('meetingProvider')}
+            placeholder="Keiner" options=${MEETING_PROVIDERS} />
+          <${TextField} class="span-4" label="Meeting-Link" value=${c.meetingUrl || ''} onInput=${set('meetingUrl')} placeholder="https://teams.microsoft.com/… oder https://zoom.us/j/…"
+            hint="Zum Beispiel dein persönlicher Zoom-Raum oder ein fester Teams-Besprechungslink" />
+          <${TextArea} class="span-6" label="Zugangsdaten" value=${c.meetingDetails || ''} onInput=${set('meetingDetails')} rows=${2}
+            placeholder="z. B. Meeting-ID 123 456 789, Kenncode 4711, Einwahl +49 …" />
+          <${NumberField} class="span-2" label="Standarddauer" value=${c.meetingDuration || 60} digits=${0} min=${5} max=${600} suffix="Min." onChange=${set('meetingDuration')} />
+          <${SelectField} class="span-4" label="Zeitzone für Termine" value=${c.meetingTimeZone || ''} onChange=${set('meetingTimeZone')}
+            placeholder=${`Zeitzone dieses Geräts (${deviceTimeZone()})`} options=${TIME_ZONES.map((tz) => ({ id: tz, label: tz.replace(/_/g, ' ') }))}
+            hint="Zum Beispiel Europe/Berlin, wenn deine Kunden dieses Unternehmens in Deutschland sitzen" />
         </div>
       <//>
 

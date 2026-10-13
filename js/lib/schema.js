@@ -3,13 +3,17 @@
 
 import { uid, nowISO, todayISO } from './util.js';
 
-export const SCHEMA_VERSION = 1;
+// Version 2 (Oktober 2026): Termine und Kundendokumentation. Ältere Backups bleiben einlesbar.
+export const SCHEMA_VERSION = 2;
 export const DB_NAME = 'bbc-finance';
+/** Stand der Anwendung – nach einem Update meldet das Tool einmal, dass alle Daten übernommen wurden. */
+export const APP_VERSION = '2026-10-13';
 
 /** Sammlungen, die vollständig im Arbeitsspeicher gehalten werden. */
 export const COLLECTIONS = [
   'companies', 'customers', 'services', 'invoices', 'quotes', 'payments',
   'expenses', 'attachments', 'recurring', 'reminders', 'rates', 'counters', 'audit', 'assets',
+  'appointments', 'notes',
 ];
 
 export const BASE_CURRENCY = 'USD';
@@ -77,6 +81,8 @@ export const DEFAULT_SETTINGS = {
   userName: '',
   theme: 'auto',                 // auto | light | dark
   activeCompany: 'all',
+  displayCurrency: 'USD',        // Anzeigewährung für Dashboard, Finanzübersicht und Reports
+  appVersion: '',
   aiApiKey: '',                  // bleibt nur in diesem Browser, wird nie ins Backup geschrieben
   aiModel: 'claude-haiku-5-5',
   shrinkImages: true,
@@ -109,6 +115,16 @@ export const DEFAULT_SETTINGS = {
         subject: 'Quote {NUMBER}',
         body: 'Hello {CONTACT},\n\nplease find attached quote {NUMBER} dated {DATE} for {TOTAL}. It is valid until {DUE}.\n\nPlease let me know if you have any questions.\n\nBest regards\n{SENDER}',
       },
+    },
+  },
+  appointmentTemplates: {
+    de: {
+      subject: 'Termin am {DATE} um {TIME} Uhr: {TITLE}',
+      body: 'Guten Tag {CONTACT},\n\nhiermit bestätige ich unseren Termin:\n\n{TITLE}\n{DATE}, {TIME} bis {END} Uhr ({TIMEZONE})\n\n{MEETING}\n\n{AGENDA}\n\nIch freue mich auf unser Gespräch.\n\nViele Grüße\n{SENDER}\n{COMPANY}',
+    },
+    en: {
+      subject: 'Meeting on {DATE} at {TIME}: {TITLE}',
+      body: 'Hello {CONTACT},\n\nI am pleased to confirm our meeting:\n\n{TITLE}\n{DATE}, {TIME} to {END} ({TIMEZONE})\n\n{MEETING}\n\n{AGENDA}\n\nLooking forward to speaking with you.\n\nBest regards\n{SENDER}\n{COMPANY}',
     },
   },
   reminderTemplates: {
@@ -168,7 +184,82 @@ export function newCompany(over = {}) {
     taxNote: '',
     language: 'de',
     invoiceText: '', quoteText: '', paymentTerms: '', footer: '',
+    // Termine: Standard-Meeting dieses Unternehmens
+    meetingProvider: '', meetingUrl: '', meetingDetails: '', meetingDuration: 60, meetingTimeZone: '',
     archived: false,
+    ...over,
+  };
+}
+
+export const MEETING_PROVIDERS = [
+  { id: 'teams', label: 'Microsoft Teams' },
+  { id: 'zoom', label: 'Zoom' },
+  { id: 'meet', label: 'Google Meet' },
+  { id: 'other', label: 'Anderer Dienst' },
+];
+export const APPOINTMENT_KINDS = [
+  { id: 'video', label: 'Videocall' },
+  { id: 'phone', label: 'Telefon' },
+  { id: 'onsite', label: 'Vor Ort' },
+];
+export const APPOINTMENT_STATUS = {
+  planned: { label: 'Geplant', tone: 'info' },
+  done: { label: 'Stattgefunden', tone: 'good' },
+  cancelled: { label: 'Abgesagt', tone: 'mute' },
+};
+export const NOTE_KINDS = [
+  { id: 'note', label: 'Notiz' },
+  { id: 'call', label: 'Telefonat' },
+  { id: 'email', label: 'E-Mail' },
+  { id: 'meeting', label: 'Gespräch' },
+  { id: 'task', label: 'Aufgabe' },
+];
+
+/** Gängige Zeitzonen für Termine; die Zeitzone dieses Geräts kommt immer dazu. */
+export const TIME_ZONES = ['Europe/Berlin', 'Europe/Zurich', 'Europe/Vienna', 'Europe/Madrid', 'Europe/London', 'Asia/Dubai', 'America/New_York', 'America/Los_Angeles', 'UTC'];
+export const deviceTimeZone = () => {
+  try { return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'; } catch (_) { return 'UTC'; }
+};
+
+export function newAppointment(company, over = {}) {
+  const start = over.start || '10:00';
+  const minutes = Number(company && company.meetingDuration) || 60;
+  const [h, m] = start.split(':').map(Number);
+  const endMin = Math.min(h * 60 + m + minutes, 23 * 60 + 59);
+  return {
+    ...stamp(),
+    companyId: company ? company.id : '',
+    customerId: '',
+    contactName: '',             // Gesprächspartner, falls (noch) kein Kunde
+    title: '',
+    date: todayISO(),
+    start,
+    end: `${String(Math.floor(endMin / 60)).padStart(2, '0')}:${String(endMin % 60).padStart(2, '0')}`,
+    timeZone: (company && company.meetingTimeZone) || deviceTimeZone(),
+    kind: 'video',
+    meetingProvider: company ? company.meetingProvider || '' : '',
+    meetingUrl: company ? company.meetingUrl || '' : '',
+    meetingDetails: company ? company.meetingDetails || '' : '',
+    location: '',
+    attendees: '',
+    agenda: '',
+    language: company ? company.language || 'de' : 'de',
+    status: 'planned',
+    outcome: '',
+    sequence: 0,
+    ...over,
+  };
+}
+
+export function newNote(over = {}) {
+  return {
+    ...stamp(),
+    customerId: '',
+    companyId: '',
+    date: todayISO(),
+    kind: 'note',
+    title: '',
+    text: '',
     ...over,
   };
 }

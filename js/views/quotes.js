@@ -11,7 +11,7 @@ import { buildDocModel } from '../lib/docmodel.js';
 import { quoteStatus, toUSD } from '../lib/calc.js';
 import { date, dateTime } from '../lib/format.js';
 import { matches, todayISO } from '../lib/util.js';
-import { QuoteBadge, DocAmount, CompanyTag, customerLabel } from './shared.js';
+import { QuoteBadge, DocAmount, CompanyTag, customerLabel, toDisp } from './shared.js';
 import { SendModal, downloadDoc } from './send.js';
 import { History } from './invoices.js';
 
@@ -40,7 +40,7 @@ export function QuotesView() {
     ...(showCompany ? [{ key: 'company', label: 'Unternehmen', render: (r) => html`<${CompanyTag} id=${r.quote.companyId} />` }] : []),
     { key: 'date', label: 'Datum', sort: (r) => r.quote.issueDate, render: (r) => date(r.quote.issueDate) },
     { key: 'valid', label: 'Gültig bis', sort: (r) => r.quote.validUntil || '', render: (r) => date(r.quote.validUntil) },
-    { key: 'total', label: 'Betrag', align: 'right', sort: (r) => toUSD(r.quote.totals ? r.quote.totals.totalCents : 0, r.quote.currency, r.quote.fx) || 0, render: (r) => html`<${DocAmount} doc=${r.quote} />` },
+    { key: 'total', label: 'Betrag', align: 'right', sort: (r) => toDisp(r.quote.totals ? r.quote.totals.totalCents : 0, r.quote.currency, r.quote.fx) || 0, render: (r) => html`<${DocAmount} doc=${r.quote} />` },
     { key: 'status', label: 'Status', sort: (r) => r.status, render: (r) => html`<${QuoteBadge} quote=${r.quote} />` },
   ];
 
