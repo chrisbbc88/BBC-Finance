@@ -4,18 +4,19 @@
 import { uid, nowISO, todayISO } from './util.js';
 
 // Version 2 (Oktober 2026): Termine und Kundendokumentation. Ältere Backups bleiben einlesbar.
-export const SCHEMA_VERSION = 2;
+// Version 3 (Oktober 2026): To-dos.
+export const SCHEMA_VERSION = 3;
 export const DB_NAME = 'bbc-finance';
 /** Stand der Anwendung – nach einem Update meldet das Tool einmal, dass alle Daten übernommen wurden. */
-export const APP_VERSION = '2026-10-13b';
+export const APP_VERSION = '2026-10-14';
 /** Kurzer Hinweis auf die Neuerungen dieser Fassung (erscheint einmal nach dem Update). */
-export const APP_NEWS = 'Neu: Kontakte statt Kunden (Kunde K / Kontakt KO) und Kontaktdaten aus dem Impressum übernehmen.';
+export const APP_NEWS = 'Neu: To-dos mit Fälligkeit (bei Kontakten, aus Terminen, im Dashboard) und Nachfrage nach abgelaufenen Terminen.';
 
 /** Sammlungen, die vollständig im Arbeitsspeicher gehalten werden. */
 export const COLLECTIONS = [
   'companies', 'customers', 'services', 'invoices', 'quotes', 'payments',
   'expenses', 'attachments', 'recurring', 'reminders', 'rates', 'counters', 'audit', 'assets',
-  'appointments', 'notes',
+  'appointments', 'notes', 'todos',
 ];
 
 export const BASE_CURRENCY = 'USD';
@@ -249,6 +250,21 @@ export function newAppointment(company, over = {}) {
     status: 'planned',
     outcome: '',
     sequence: 0,
+    ...over,
+  };
+}
+
+export function newTodo(over = {}) {
+  return {
+    ...stamp(),
+    title: '',
+    due: '',                 // Fälligkeit YYYY-MM-DD, optional
+    customerId: '',          // Kontakt bzw. Kunde, optional
+    companyId: '',           // Unternehmen, optional
+    appointmentId: '',       // stammt aus diesem Termin, optional
+    note: '',
+    done: false,
+    doneAt: null,
     ...over,
   };
 }

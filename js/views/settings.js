@@ -52,7 +52,7 @@ function BackupPanel() {
           `${c.companies} Unternehmen, ${c.customers} Kunden, ${c.services} Leistungen`,
           `${c.invoices} Rechnungen, ${c.quotes} Angebote, ${c.payments} Zahlungen`,
           `${c.expenses} Ausgaben, ${info.includesFiles ? `${info.fileCount} Belegdateien` : 'ohne Belegdateien'}`,
-          ...((c.appointments || c.notes) ? [`${c.appointments || 0} Termine, ${c.notes || 0} Einträge in der Kundendokumentation`] : []),
+          ...((c.appointments || c.notes || c.todos) ? [`${c.appointments || 0} Termine, ${c.notes || 0} Einträge in der Kundendokumentation, ${c.todos || 0} To-dos`] : []),
         ],
         confirmLabel: 'Daten ersetzen', danger: true,
       });
@@ -236,7 +236,7 @@ function DataPanel() {
   async function clear() {
     const ok = await ask({
       title: 'Alle Kunden, Leistungen und Belege löschen?',
-      text: 'Kunden, Leistungen, Rechnungen, Angebote, Zahlungen, Ausgaben, Belegdateien, Termine, Kundendokumentation, Nummernzähler und das Protokoll werden gelöscht – auch selbst angelegte Einträge. Unternehmen und Einstellungen bleiben erhalten.',
+      text: 'Kunden, Leistungen, Rechnungen, Angebote, Zahlungen, Ausgaben, Belegdateien, Termine, Kundendokumentation, To-dos, Nummernzähler und das Protokoll werden gelöscht – auch selbst angelegte Einträge. Unternehmen und Einstellungen bleiben erhalten.',
       confirmLabel: 'Löschen', danger: true,
     });
     if (!ok) return;

@@ -22,6 +22,7 @@ import {
   storeData, scopeCompanyId, InvoiceBadge, QuoteBadge, DocAmount, CompanyTag, CUR, ALT, pick, pickAlt, mc, ma,
 } from './shared.js';
 import { AppointmentModal, AppointmentList, sortAppointments, documentAppointment } from './appointments.js';
+import { TodoList, TodoQuickAdd, TodoModal, byDue } from './todos.js';
 
 /* ---------- Formular ---------- */
 
@@ -309,6 +310,8 @@ export function CustomerDetailView({ id }) {
   const [editing, setEditing] = useState(false);
   const [noteEdit, setNoteEdit] = useState(null);
   const [apptEdit, setApptEdit] = useState(null);
+  const [todoEdit, setTodoEdit] = useState(null);
+  const [showDone, setShowDone] = useState(false);
   if (!c) {
     return html`<${EmptyState} icon="customers" title="Kontakt nicht gefunden" text="Dieser Kontakt existiert nicht mehr.">
       <${Button} onClick=${() => navigate('/customers')}>Zu den Kontakten<//>
@@ -320,6 +323,9 @@ export function CustomerDetailView({ id }) {
   const notes = state.notes.filter((n) => n.customerId === id);
   const appts = sortAppointments(state.appointments.filter((a) => a.customerId === id));
   const upcoming = appts.filter((a) => a.status === 'planned' && a.date >= today);
+  const myTodos = state.todos.filter((t) => t.customerId === id);
+  const openTodos = myTodos.filter((t) => !t.done).sort(byDue);
+  const doneTodos = myTodos.filter((t) => t.done).sort((a, b) => ((a.doneAt || '') < (b.doneAt || '') ? 1 : -1));
   const invoices = state.invoices.filter((i) => i.customerId === id).sort((a, b) => (a.issueDate < b.issueDate ? 1 : -1));
   const quotes = state.quotes.filter((i) => i.customerId === id).sort((a, b) => (a.issueDate < b.issueDate ? 1 : -1));
   const companyIds = [...new Set([...invoices, ...quotes].map((d) => d.companyId))];
@@ -394,6 +400,12 @@ export function CustomerDetailView({ id }) {
 
     <div class="split">
       <div class="split-main">
+        <${Panel} title=${`To-dos${openTodos.length ? ` (${openTodos.length})` : ''}`} action=${doneTodos.length > 0 && html`<button type="button" class="link-btn small"
+            onClick=${() => setShowDone(!showDone)}>${showDone ? 'Erledigte ausblenden' : `${doneTodos.length} erledigte zeigen`}</button>`}>
+          <${TodoList} items=${openTodos} showCustomer=${false} onEdit=${setTodoEdit} />
+          ${showDone && html`<${TodoList} items=${doneTodos} showCustomer=${false} onEdit=${setTodoEdit} />`}
+          <${TodoQuickAdd} customerId=${id} />
+        <//>
         <${ServiceOverview} rows=${svcRows} />
         <${Panel} title="Termine und Dokumentation" action=${html`<div class="panel-head-actions">
             <${Button} small icon="note" onClick=${() => setNoteEdit(newNote({ customerId: id }))}>Eintrag<//>
@@ -442,6 +454,7 @@ export function CustomerDetailView({ id }) {
     ${editing && html`<${CustomerFormModal} customer=${c} onClose=${() => setEditing(false)} />`}
     ${noteEdit && html`<${NoteModal} note=${noteEdit} onClose=${() => setNoteEdit(null)} />`}
     ${apptEdit && html`<${AppointmentModal} key=${apptEdit.id} appointment=${apptEdit} onClose=${() => setApptEdit(null)} />`}
+    ${todoEdit && html`<${TodoModal} key=${todoEdit.id} todo=${todoEdit} onClose=${() => setTodoEdit(null)} />`}
   `;
 }
 
@@ -525,6 +538,8 @@ function CustomerTimeline({ notes, appts, onNote, onAppt, hasUpcoming }) {
             <${Badge} tone=${missingDoc ? 'warn' : st.tone}>${missingDoc ? 'Nicht dokumentiert' : st.label}<//>
             <${CompanyTag} id=${a.companyId} /></div>
           ${a.outcome ? html`<div class="tl-text">${a.outcome}</div>` : (a.agenda && html`<div class="tl-text muted-text">${a.agenda}</div>`)}
+          ${a.nextSteps && html`<div class="tl-text"><span class="strong">Nächste Schritte:</span> ${a.nextSteps}</div>`}
+          ${(() => { const ts = state.todos.filter((t) => t.appointmentId === a.id); return ts.length > 0 && html`<div class="tl-todos">${ts.map((t) => html`<span class=${`tag${t.done ? ' is-done' : ''}`}>${t.done ? '✓' : '○'} ${t.title}</span>`)}</div>`; })()}
         </div>
         <div class="tl-actions">
           ${missingDoc && html`<${Button} small onClick=${() => documentAppointment(a)}>Dokumentieren<//>`}

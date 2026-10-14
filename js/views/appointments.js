@@ -1,6 +1,6 @@
 // Termine: Kalender (Monat und Liste), Termin anlegen und bearbeiten, Einladungstext und Kalenderdatei.
 
-import { html, useState, useMemo, useStore, navigate, toast, attempt, ask, pauseUnloadWarning } from '../ui/core.js';
+import { html, useState, useEffect, useMemo, useStore, navigate, toast, attempt, ask, pauseUnloadWarning } from '../ui/core.js';
 import {
   Button, PageHeader, Modal, TextField, TextArea, SelectField, DateField, Segmented, Combobox, Field, Notice, Menu, Badge, Panel,
   EmptyState, Chips,
@@ -10,9 +10,10 @@ import { state, byId, activeCompanies, currentCompany, inScope } from '../lib/st
 import {
   newAppointment, customerName, customerPerson, MEETING_PROVIDERS, APPOINTMENT_KINDS, APPOINTMENT_STATUS, TIME_ZONES, deviceTimeZone, LANGUAGES,
 } from '../lib/schema.js';
-import { saveAppointment, setAppointmentStatus, deleteAppointment } from '../lib/actions.js';
+import { saveAppointment, setAppointmentStatus, deleteAppointment, completeAppointment, snoozeFollowUp } from '../lib/actions.js';
+import { TodoList } from './todos.js';
 import {
-  invitationText, buildIcs, appointmentTimes, tzShort, timeIn, dateIn, longDate, providerLabel,
+  invitationText, buildIcs, appointmentTimes, tzShort, timeIn, dateIn, longDate, providerLabel, needsFollowUp,
 } from '../lib/calendar.js';
 import { saveBlob } from '../lib/pdf.js';
 import { date } from '../lib/format.js';
@@ -132,7 +133,7 @@ export function AppointmentModal({ appointment, onClose }) {
     footer=${html`
       ${!isNew && html`<${Menu} label="Mehr" items=${[
         { label: 'Einladung und Kalenderdatei', icon: 'mail', onClick: () => setInvite(stored || a) },
-        stored && stored.status !== 'done' && { label: 'Termin dokumentieren', icon: 'edit', onClick: () => documentAppointment(stored, onClose) },
+        stored && { label: stored.status === 'done' ? 'Dokumentation bearbeiten' : 'Termin dokumentieren', icon: 'edit', onClick: () => { onClose(); documentAppointment(stored); } },
         stored && stored.status === 'planned' && { label: 'Termin absagen', icon: 'x', onClick: () => cancelAppointment(stored, onClose) },
         stored && stored.status !== 'planned' && { label: 'Wieder als geplant führen', icon: 'undo', onClick: async () => { await attempt(() => setAppointmentStatus(stored.id, 'planned')); onClose(); } },
         { label: 'Termin löschen', icon: 'trash', danger: true, onClick: remove },
@@ -143,6 +144,7 @@ export function AppointmentModal({ appointment, onClose }) {
     ${stored && stored.status !== 'planned' && html`<${Notice} tone=${stored.status === 'done' ? 'good' : 'warn'}>
       ${stored.status === 'done' ? 'Dieser Termin hat stattgefunden.' : 'Dieser Termin ist abgesagt.'}
       ${stored.outcome ? html`<div class="pre notice-sub">${stored.outcome}</div>` : ''}
+      ${stored.nextSteps ? html`<div class="pre notice-sub">Nächste Schritte: ${stored.nextSteps}</div>` : ''}
     <//>`}
     <div class="form-grid">
       <${SelectField} class="span-2" label="Über Unternehmen" value=${a.companyId} onChange=${pickCompany}
@@ -186,16 +188,115 @@ export function AppointmentModal({ appointment, onClose }) {
   <//>`;
 }
 
-async function documentAppointment(appt, done) {
-  const text = await ask({
-    title: 'Termin dokumentieren',
-    text: `${appt.title}, ${date(appt.date)} ${appt.start} Uhr. Was wurde besprochen, was ist vereinbart? Der Eintrag erscheint in der Kundendokumentation.`,
-    input: { label: 'Ergebnis und nächste Schritte', value: appt.outcome || '', multiline: true },
-    confirmLabel: 'Als stattgefunden speichern',
-  });
-  if (text === null) return;
-  const rec = await attempt(() => setAppointmentStatus(appt.id, 'done', text));
-  if (rec) { toast('Termin dokumentiert', 'good'); if (done) done(rec); }
+/* ---------- Termin dokumentieren ----------
+ * Ein Fenster für Ergebnis, nächste Schritte und To-dos. Von überall aufrufbar über documentAppointment(appt);
+ * angezeigt wird es vom AppointmentDocHost im Rahmen der App. */
+
+let docState = null;
+const docListeners = new Set();
+const setDocState = (v) => { docState = v; for (const l of docListeners) l(v); };
+
+function documentAppointment(appt, done) { setDocState({ appt, done }); }
+
+export function AppointmentDocHost() {
+  const [d, setD] = useState(docState);
+  useEffect(() => { docListeners.add(setD); return () => docListeners.delete(setD); }, []);
+  if (!d) return null;
+  return html`<${DocumentModal} key=${d.appt.id} appointment=${d.appt}
+    onClose=${(rec) => { setDocState(null); if (rec && d.done) d.done(rec); }} />`;
+}
+
+function DocumentModal({ appointment, onClose }) {
+  const a = byId('appointments', appointment.id) || appointment;
+  const [outcome, setOutcome] = useState(a.outcome || '');
+  const [nextSteps, setNextSteps] = useState(a.nextSteps || '');
+  const defaultDue = addDays(todayISO(), 7);
+  const [rows, setRows] = useState([{ key: 1, title: '', due: defaultDue }]);
+  const [busy, setBusy] = useState(false);
+  const existing = state.todos.filter((t) => t.appointmentId === a.id);
+  const setRow = (key, patch) => setRows((rs) => rs.map((r) => (r.key === key ? { ...r, ...patch } : r)));
+  const addRow = () => setRows((rs) => [...rs, { key: Math.max(0, ...rs.map((r) => r.key)) + 1, title: '', due: defaultDue }]);
+  async function submit() {
+    setBusy(true);
+    const res = await attempt(() => completeAppointment(a.id, { outcome, nextSteps, todos: rows }));
+    setBusy(false);
+    if (!res) return;
+    toast(res.todos.length ? `Termin dokumentiert, ${res.todos.length} ${res.todos.length === 1 ? 'To-do' : 'To-dos'} angelegt` : 'Termin dokumentiert', 'good');
+    onClose(res.appointment);
+  }
+  return html`<${Modal} title="Termin dokumentieren" onClose=${() => onClose()} size="lg" onSubmit=${submit}
+    footer=${html`<${Button} onClick=${() => onClose()}>Abbrechen<//><${Button} variant="primary" type="submit" busy=${busy}>Speichern<//>`}>
+    <div class="invite-head">
+      <span class="invite-dot" style=${`background:${companyColor(a.companyId)}`}></span>
+      <div><div class="strong">${a.title}</div>
+        <div class="muted-text">${longDate(a.date)}, ${a.start}–${a.end}${apptCustomerLabel(a) ? ` · ${apptCustomerLabel(a)}` : ''}</div></div>
+    </div>
+    <div class="form-grid">
+      <${TextArea} class="span-6" label="Ergebnis / kurzes Statement" value=${outcome} onInput=${setOutcome} rows=${3}
+        placeholder="Was wurde besprochen, wie ist es gelaufen?" />
+      <${TextArea} class="span-6" label="Nächste Schritte" value=${nextSteps} onInput=${setNextSteps} rows=${2}
+        placeholder="z. B. Angebot bis Freitag, Folgetermin in zwei Wochen" />
+    </div>
+    <h3 class="sub-head">To-dos aus diesem Termin</h3>
+    ${existing.length > 0 && html`<${TodoList} items=${existing} showCustomer=${false} />`}
+    <div class="doc-todos">
+      ${rows.map((r, i) => html`<div class="doc-todo" key=${r.key}>
+        <input class="input" placeholder="To-do, z. B. Angebot schicken" aria-label=${`To-do ${i + 1}`} value=${r.title}
+          onInput=${(e) => setRow(r.key, { title: e.target.value })}
+          onKeyDown=${(e) => { if (e.key === 'Enter') { e.preventDefault(); if (r.title.trim()) addRow(); } }} />
+        <input class="input" type="date" aria-label=${`To-do ${i + 1}: fällig am`} value=${r.due} onInput=${(e) => setRow(r.key, { due: e.target.value })} />
+        <${Button} variant="ghost" small icon="trash" title="Zeile entfernen" disabled=${rows.length === 1 && !r.title}
+          onClick=${() => setRows((rs) => (rs.length === 1 ? [{ key: r.key + 1, title: '', due: defaultDue }] : rs.filter((x) => x.key !== r.key)))} />
+      </div>`)}
+      <${Button} small icon="plus" onClick=${addRow}>Weiteres To-do<//>
+    </div>
+    <p class="field-hint">To-dos erscheinen beim Kontakt, im Dashboard und unter „To-dos“. Leere Zeilen werden ignoriert.</p>
+  <//>`;
+}
+
+/* ---------- Nachfrage nach abgelaufenen Terminen ---------- */
+
+export const followUpAppointments = (now = new Date()) => sortAppointments(state.appointments.filter(inScope).filter((a) => needsFollowUp(a, now)));
+
+async function noNotes(a) {
+  const rec = await attempt(() => setAppointmentStatus(a.id, 'done', ''));
+  if (rec) toast('Als stattgefunden vermerkt', 'good');
+}
+async function snooze(a, hours) {
+  const until = hours === 'morning'
+    ? (() => { const d = new Date(); d.setDate(d.getDate() + 1); d.setHours(9, 0, 0, 0); return d; })()
+    : new Date(Date.now() + hours * 3600000);
+  const rec = await attempt(() => snoozeFollowUp(a.id, until.toISOString()));
+  if (rec) toast(`Erinnerung verschoben auf ${until.toLocaleString('de-DE', { weekday: 'short', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })} Uhr`, 'good');
+}
+
+/** Dashboard: Termine, die vorbei sind – Ergebnis und To-dos eintragen? */
+export function FollowUpPanel() {
+  const items = followUpAppointments();
+  if (!items.length) return null;
+  return html`<section class="followups" aria-label="Termine nachbereiten">
+    <div class="followups-head"><${Icon} name="calendar" /><strong>${items.length === 1 ? 'Ein Termin ist vorbei' : `${items.length} Termine sind vorbei`}</strong>
+      <span class="muted-text">Möchtest du Ergebnis, nächste Schritte oder To-dos festhalten?</span></div>
+    <ul>
+      ${items.slice(0, 5).map((a) => html`<li key=${a.id}>
+        <span class="followup-what" style=${`--chip:${companyColor(a.companyId)}`}>
+          <span class="strong">${a.title}</span>
+          <span class="cell-sub">${date(a.date)}, ${a.start}–${a.end}${apptCustomerLabel(a) ? ` · ${apptCustomerLabel(a)}` : ''}</span>
+        </span>
+        <span class="followup-actions">
+          <${Button} small variant="primary" icon="edit" onClick=${() => documentAppointment(a)}>Ja, dokumentieren<//>
+          <${Button} small onClick=${() => noNotes(a)}>Nein<//>
+          <${Menu} small label="Später" icon="clock" items=${[
+            { label: 'In einer Stunde', onClick: () => snooze(a, 1) },
+            { label: 'In drei Stunden', onClick: () => snooze(a, 3) },
+            { label: 'Morgen früh', onClick: () => snooze(a, 'morning') },
+            { label: 'In drei Tagen', onClick: () => snooze(a, 72) },
+          ]} />
+        </span>
+      </li>`)}
+    </ul>
+    ${items.length > 5 && html`<p class="cell-sub">und ${items.length - 5} weitere im Kalender</p>`}
+  </section>`;
 }
 
 async function cancelAppointment(appt, done) {
@@ -407,8 +508,14 @@ export function UpcomingAppointments() {
   const [editing, setEditing] = useState(null);
   const today = todayISO();
   const until = addDays(today, 14);
-  const items = sortAppointments(state.appointments.filter(inScope).filter((a) => a.status === 'planned' && a.date >= today && a.date <= until)).slice(0, 6);
-  if (!items.length) return null;
+  const now = new Date();
+  const items = sortAppointments(state.appointments.filter(inScope)
+    .filter((a) => a.status === 'planned' && a.date >= today && a.date <= until && appointmentTimes(a).end > now)).slice(0, 6);
+  if (!items.length) {
+    return html`<${Panel} title="Nächste Termine" class="dash-appts" action=${html`<a class="panel-link" href="#/appointments">Kalender</a>`}>
+      <p class="muted-text">Keine Termine in den nächsten 14 Tagen.</p>
+    <//>`;
+  }
   return html`<${Panel} title="Nächste Termine" class="dash-appts" action=${html`<a class="panel-link" href="#/appointments">Kalender</a>`}>
     <${AppointmentList} items=${items} onOpen=${setEditing} showCustomer />
     ${editing && html`<${AppointmentModal} key=${editing.id} appointment=${editing} onClose=${() => setEditing(null)} />`}

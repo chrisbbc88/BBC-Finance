@@ -27,7 +27,8 @@ import { FinanceView, ReportsView } from './views/reports.js';
 import { CompaniesView, CompanyEditView } from './views/companies.js';
 import { SettingsView, downloadBackup } from './views/settings.js';
 import { AuditView } from './views/audit.js';
-import { AppointmentsView } from './views/appointments.js';
+import { AppointmentsView, AppointmentDocHost, followUpAppointments } from './views/appointments.js';
+import { TodosView, dueTodoCount } from './views/todos.js';
 
 const NAV = [
   [{ path: '/', label: 'Dashboard', icon: 'dashboard', exact: true }],
@@ -39,6 +40,7 @@ const NAV = [
   [
     { path: '/customers', label: 'Kontakte', icon: 'customers' },
     { path: '/appointments', label: 'Termine', icon: 'calendar' },
+    { path: '/todos', label: 'To-dos', icon: 'check' },
     { path: '/services', label: 'Leistungen', icon: 'services' },
   ],
   [
@@ -129,6 +131,10 @@ function searchAll(q) {
     .filter((a) => matches(q, a.title, a.contactName, custName(a), a.agenda, a.outcome))
     .sort((a, b) => (`${a.date}${a.start}` < `${b.date}${b.start}` ? 1 : -1))
     .map((a) => ({ key: a.id, label: a.title, sub: `${a.date.split('-').reverse().join('.')}, ${a.start} Uhr`, href: `/appointments?open=${a.id}` })));
+  add('To-dos', state.todos
+    .filter((t) => matches(q, t.title, t.note, custName(t)))
+    .sort((a, b) => Number(a.done) - Number(b.done))
+    .map((t) => ({ key: t.id, label: `${t.done ? '✓ ' : ''}${t.title}`, sub: [custName(t), t.due ? `fällig ${t.due.split('-').reverse().join('.')}` : ''].filter(Boolean).join(', '), href: t.customerId ? `/customers/${t.customerId}` : '/todos' })));
   add('Leistungen', state.services
     .filter((s) => matches(q, s.name, s.internalName, s.category, s.description))
     .map((s) => ({ key: s.id, label: s.name, sub: money(s.priceCents, s.currency), href: '/services' })));
@@ -246,6 +252,7 @@ function Route({ route }) {
   }
   if (a === 'customers') return b ? html`<${CustomerDetailView} id=${b} />` : html`<${CustomersView} />`;
   if (a === 'appointments') return html`<${AppointmentsView} params=${p} />`;
+  if (a === 'todos') return html`<${TodosView} />`;
   if (a === 'services') return html`<${ServicesView} />`;
   if (a === 'expenses') return html`<${ExpensesView} />`;
   if (a === 'recurring') return html`<${RecurringView} />`;
@@ -305,6 +312,8 @@ function App() {
 
   const isActive = (item) => (item.exact ? route.path === item.path : route.path === item.path || route.path.startsWith(`${item.path}/`));
   const reviewCount = state.expenses.filter((e) => e.status === 'review').length;
+  const followCount = followUpAppointments().length;
+  const todoCount = dueTodoCount();
 
   return html`
     <div class="brandband" aria-hidden="true">
@@ -321,6 +330,8 @@ function App() {
               <a href=${`#${item.path}`} class=${`nav-link${isActive(item) ? ' is-active' : ''}`} aria-current=${isActive(item) ? 'page' : undefined}>
                 <${Icon} name=${item.icon} /><span>${item.label}</span>
                 ${item.path === '/expenses' && reviewCount > 0 && html`<span class="nav-count" title="Belege zu prüfen">${reviewCount}</span>`}
+                ${item.path === '/appointments' && followCount > 0 && html`<span class="nav-count" title="Termine nachbereiten">${followCount}</span>`}
+                ${item.path === '/todos' && todoCount > 0 && html`<span class="nav-count" title="Fällige To-dos">${todoCount}</span>`}
               </a>
             </li>`)}
           </ul>`)}
@@ -351,6 +362,7 @@ function App() {
       </div>
       <div class="nav-scrim" onClick=${() => setNavOpen(false)}></div>
     </div>
+    <${AppointmentDocHost} />
     <${DialogHost} />
     <${ToastHost} />
   `;

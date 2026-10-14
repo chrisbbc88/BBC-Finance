@@ -794,3 +794,35 @@ a.cell-main:hover { text-decoration: underline; }
 .imprint-open { margin-bottom: 14px; }
 .imprint-box { margin-bottom: 16px; padding: 12px 14px 14px; border-radius: var(--r-s); background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--line); }
 .imprint-box .form-grid { margin-top: 8px; }
+
+/* ---------- To-dos und Nachbereitung ---------- */
+.todo-list { list-style: none; margin: 0 0 10px; padding: 0; }
+.todo-list li { display: flex; align-items: flex-start; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--line); }
+.todo-list li:last-child { border-bottom: 0; }
+.todo-check { width: 18px; height: 18px; margin-top: 2px; flex: none; accent-color: var(--ink); cursor: pointer; }
+.todo-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; padding: 0; border: 0; background: none; font: inherit; color: var(--ink); text-align: left; cursor: pointer; }
+.todo-title { font-weight: 560; overflow-wrap: anywhere; }
+.todo-list li.is-done .todo-title { text-decoration: line-through; color: var(--muted); font-weight: 400; }
+.todo-co { flex: none; font-size: 13px; }
+.todo-add { display: grid; grid-template-columns: minmax(0, 1fr) 150px auto; gap: 8px; margin-top: 6px; }
+.todo-add.with-customer { grid-template-columns: minmax(0, 1fr) 150px auto; }
+.todo-add.with-customer > .input:first-child { grid-column: 1 / -1; }
+.dash-crm { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 16px; align-items: start; margin-bottom: 16px; }
+.dash-crm .panel { margin: 0; }
+.followups { margin: 0 0 18px; padding: 14px 16px; border-radius: var(--r-m, 10px); background: var(--warn-bg); }
+.followups-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; margin-bottom: 8px; color: var(--warn); }
+.followups-head .muted-text { color: var(--ink-2); }
+.followups ul { list-style: none; margin: 0; padding: 0; }
+.followups li { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; padding: 8px 0; border-top: 1px solid rgba(0,0,0,.06); }
+.followup-what { display: flex; flex-direction: column; padding-left: 10px; box-shadow: inset 3px 0 0 var(--chip); }
+.followup-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.doc-todos { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
+.doc-todo { display: grid; grid-template-columns: minmax(0, 1fr) 160px auto; gap: 8px; width: 100%; }
+.tl-todos { display: flex; flex-wrap: wrap; margin-top: 6px; }
+.tag.is-done { text-decoration: line-through; color: var(--muted); }
+@media (max-width: 760px) {
+  .todo-add, .todo-add.with-customer { grid-template-columns: minmax(0, 1fr) 140px; }
+  .todo-add .btn, .todo-add .combo { grid-column: span 2; }
+  .doc-todo { grid-template-columns: minmax(0, 1fr) 130px auto; }
+  .dash-crm { grid-template-columns: minmax(0, 1fr); }
+}

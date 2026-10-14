@@ -15,7 +15,8 @@ import {
   todayISO, lastMonths, monthName, monthShort, periodRange, addDays,
 } from '../lib/util.js';
 import { storeData, scopeCompanyId, customerLabel, CUR, pick, pickAlt, mc, ma } from './shared.js';
-import { UpcomingAppointments } from './appointments.js';
+import { UpcomingAppointments, FollowUpPanel } from './appointments.js';
+import { DashboardTodos } from './todos.js';
 import { reminderDueLevel } from './send.js';
 import { REMINDER_LEVELS } from '../lib/schema.js';
 import { loadDemo } from '../lib/demo.js';
@@ -131,6 +132,8 @@ export function DashboardView() {
       </div>
     </section>
 
+    <${FollowUpPanel} />
+
     <div class="stat-row">
       <${Stat} label="Umsatz Quartal" value=${mc(pick(kpi.quarter))} sub=${`≈ ${ma(pickAlt(kpi.quarter))}`} />
       <${Stat} label="Umsatz Jahr" value=${mc(pick(kpi.year))} sub=${`≈ ${ma(pickAlt(kpi.year))}`} />
@@ -140,6 +143,11 @@ export function DashboardView() {
       <${Stat} label="Bezahlt dieses Jahr" value=${mc(pick(kpi.paid))} sub=${`${kpi.paid.count} Rechnungen`} href="#/invoices?status=paid" />
       <${Stat} label="Rechnung im Schnitt" value=${mc(pick(kpi.average))} sub=${`≈ ${ma(pickAlt(kpi.average))}`} />
       <${Stat} label="Aktive Kunden" value=${String(kpi.activeCustomers)} href="#/customers" />
+    </div>
+
+    <div class="dash-crm">
+      <${DashboardTodos} />
+      <${UpcomingAppointments} />
     </div>
 
     <div class="dash-grid">
@@ -202,7 +210,6 @@ export function DashboardView() {
       <//>
     </div>
 
-    <${UpcomingAppointments} />
 
     <div class="dash-lists">
       <${Panel} title="Umsatz pro Kunde" action=${html`<a class="panel-link" href="#/reports?r=customer">Report</a>`}>

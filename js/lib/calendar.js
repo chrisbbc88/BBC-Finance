@@ -68,6 +68,16 @@ export function longDate(dateISO, lang = 'de') {
 export const providerLabel = (id) => (MEETING_PROVIDERS.find((p) => p.id === id) || {}).label || '';
 export const isWebLink = (s) => /^https?:\/\/\S+$/i.test(String(s || '').trim());
 
+/**
+ * Muss nach diesem Termin nachgefragt werden? Geplant, vorbei und nicht auf später verschoben.
+ */
+export function needsFollowUp(appt, now = new Date()) {
+  if (!appt || appt.status !== 'planned') return false;
+  const { end } = appointmentTimes(appt);
+  if (end > now) return false;
+  return !appt.followUpAt || new Date(appt.followUpAt) <= now;
+}
+
 export function appointmentTimes(appt) {
   const start = zonedToUtc(appt.date, appt.start, appt.timeZone);
   let end = zonedToUtc(appt.date, appt.end || appt.start, appt.timeZone);

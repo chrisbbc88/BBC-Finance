@@ -10,7 +10,7 @@ import { exportCSV } from '../lib/export.js';
 
 const ENTITY = {
   invoices: 'Rechnungen', quotes: 'Angebote', customers: 'Kontakte', services: 'Leistungen',
-  expenses: 'Ausgaben', companies: 'Unternehmen', recurring: 'Wiederkehrend', appointments: 'Termine', notes: 'Kundendokumentation', system: 'System',
+  expenses: 'Ausgaben', companies: 'Unternehmen', recurring: 'Wiederkehrend', appointments: 'Termine', notes: 'Kundendokumentation', todos: 'To-dos', system: 'System',
 };
 
 const FIELD = {
@@ -23,7 +23,7 @@ const FIELD = {
   defaultTaxRate: 'Standard-Steuersatz', paymentTermDays: 'Zahlungsziel', accountHolder: 'Kontoinhaber', bankName: 'Bank',
   street: 'Straße', zip: 'PLZ', city: 'Ort', country: 'Land', taxId: 'Steuernummer', vatId: 'USt-IdNr.', active: 'Aktiv',
   issueDate: 'Belegdatum', customer: 'Kunde', paymentsDeleted: 'Gelöschte Zahlungen', remindersDeleted: 'Gelöschte Erinnerungen',
-  freedNumber: 'Nummer wieder frei', result: 'Ergebnis', start: 'Beginn', end: 'Ende', title: 'Titel', outcome: 'Ergebnis', kind: 'Art', text: 'Text', timeZone: 'Zeitzone',
+  freedNumber: 'Nummer wieder frei', result: 'Ergebnis', start: 'Beginn', end: 'Ende', title: 'Titel', outcome: 'Ergebnis', nextSteps: 'Nächste Schritte', todos: 'To-dos', due: 'Fällig', done: 'Erledigt', kind: 'Art', text: 'Text', timeZone: 'Zeitzone',
   meetingUrl: 'Meeting-Link', meetingProvider: 'Meeting-Dienst', agenda: 'Themen', attendees: 'Teilnehmer', contactName: 'Gesprächspartner', customerId: 'Kunde (ID)', companyId: 'Unternehmen (ID)', nextDate: 'Nächster Termin', invoiceDraftId: 'Rechnungsentwurf', counts: 'Umfang',
 };
 

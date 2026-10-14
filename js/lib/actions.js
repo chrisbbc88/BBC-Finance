@@ -3,7 +3,7 @@
 
 import { write, state, byId, all, paymentsOf } from './store.js';
 import {
-  newInvoice, newItem, customerName, INTERVALS, DOC_CURRENCIES, isCustomer,
+  newInvoice, newItem, customerName, INTERVALS, DOC_CURRENCIES, isCustomer, newTodo,
 } from './schema.js';
 import {
   computeTotals, sumPayments, openCents, invoiceStatus, fxForDoc,
@@ -177,12 +177,14 @@ export async function deleteCustomer(id) {
     // Dokumentation und Termine gehören zum Kunden und gehen mit ihm – im Protokoll bleiben sie erhalten.
     const notes = all('notes').filter((n) => n.customerId === id);
     const appts = all('appointments').filter((a) => a.customerId === id);
+    const todos = all('todos').filter((t) => t.customerId === id);
     for (const n of notes) await w.del('notes', n.id);
     for (const a of appts) await w.del('appointments', a.id);
+    for (const t of todos) await w.del('todos', t.id);
     await w.del('customers', id);
     await w.audit({
       action: 'Kunde gelöscht', entity: 'customers', entityId: id, label: customerName(c),
-      prev: { ...c, ...(notes.length || appts.length ? { related: { notes, appointments: appts } } : {}) },
+      prev: { ...c, ...(notes.length || appts.length || todos.length ? { related: { notes, appointments: appts, todos } } : {}) },
     });
   });
 }
@@ -248,6 +250,82 @@ export async function saveAppointment(appt) {
   return rec;
 }
 
+/**
+ * Termin dokumentieren: Ergebnis, nächste Schritte und neue To-dos in einem Schritt.
+ * todos: [{ title, due }] – leere Zeilen werden übergangen.
+ */
+export async function completeAppointment(id, { outcome, nextSteps, todos = [] }) {
+  const a = byId('appointments', id);
+  if (!a) fail('Termin nicht gefunden.');
+  const list = todos.filter((t) => String(t.title || '').trim());
+  for (const t of list) if (t.due && !plausibleDate(t.due)) fail(`Bitte die Fälligkeit von „${t.title}“ prüfen.`);
+  const rec = touch({
+    ...a, status: 'done', outcome: String(outcome || '').trim(), nextSteps: String(nextSteps || '').trim(), followUpAt: null,
+  });
+  if (a.status !== 'done') rec.sequence = (Number(a.sequence) || 0) + 1;
+  const created = list.map((t) => newTodo({
+    title: String(t.title).trim(), due: t.due || '', customerId: a.customerId || '', companyId: a.companyId || '', appointmentId: a.id,
+  }));
+  await write(async (w) => {
+    await w.put('appointments', rec);
+    for (const t of created) await w.put('todos', t);
+    await w.audit({
+      action: 'Termin dokumentiert', entity: 'appointments', entityId: id, label: `${a.date} ${a.start}, ${a.title}`,
+      prev: { status: a.status, outcome: a.outcome || '' },
+      next: { status: 'done', outcome: rec.outcome, nextSteps: rec.nextSteps, todos: created.map((t) => t.title).join(', ') },
+    });
+  });
+  return { appointment: rec, todos: created };
+}
+
+/** Nachfrage zu einem abgelaufenen Termin auf später verschieben. */
+export async function snoozeFollowUp(id, untilISO) {
+  const a = byId('appointments', id);
+  if (!a) return null;
+  const rec = touch({ ...a, followUpAt: untilISO });
+  await write(async (w) => { await w.put('appointments', rec); });
+  return rec;
+}
+
+/* ---------- To-dos ---------- */
+
+export async function saveTodo(todo) {
+  if (!String(todo.title || '').trim()) fail('Bitte beschreiben, was zu tun ist.');
+  if (todo.due && !plausibleDate(todo.due)) fail('Bitte die Fälligkeit prüfen.');
+  const before = byId('todos', todo.id);
+  const rec = touch({ ...todo, title: String(todo.title).trim() });
+  const d = diffFields(before, rec, ['updatedAt', 'createdAt']);
+  if (before && !d.changed.length) return rec;
+  await write(async (w) => {
+    await w.put('todos', rec);
+    await w.audit({
+      action: before ? 'To-do geändert' : 'To-do angelegt', entity: 'todos', entityId: rec.id, label: rec.title,
+      prev: before ? d.prev : null, next: before ? d.next : { title: rec.title, due: rec.due },
+    });
+  });
+  return rec;
+}
+
+export async function setTodoDone(id, done = true) {
+  const t = byId('todos', id);
+  if (!t) return null;
+  const rec = touch({ ...t, done: !!done, doneAt: done ? nowISO() : null });
+  await write(async (w) => {
+    await w.put('todos', rec);
+    await w.audit({ action: done ? 'To-do erledigt' : 'To-do wieder geöffnet', entity: 'todos', entityId: id, label: t.title, prev: { done: t.done }, next: { done: !!done } });
+  });
+  return rec;
+}
+
+export async function deleteTodo(id) {
+  const t = byId('todos', id);
+  if (!t) return;
+  await write(async (w) => {
+    await w.del('todos', id);
+    await w.audit({ action: 'To-do gelöscht', entity: 'todos', entityId: id, label: t.title, prev: t });
+  });
+}
+
 /** Termin abschließen oder absagen; `outcome` ist die Dokumentation zum Termin. */
 export async function setAppointmentStatus(id, status, outcome) {
   const a = byId('appointments', id);
@@ -270,6 +348,8 @@ export async function deleteAppointment(id) {
   const a = byId('appointments', id);
   if (!a) return;
   await write(async (w) => {
+    // To-dos aus dem Termin bleiben erhalten – nur die Verknüpfung entfällt.
+    for (const t of all('todos').filter((x) => x.appointmentId === id)) await w.put('todos', touch({ ...t, appointmentId: '' }));
     await w.del('appointments', id);
     await w.audit({ action: 'Termin gelöscht', entity: 'appointments', entityId: id, label: `${a.date} ${a.start}, ${a.title}`, prev: a });
   });
