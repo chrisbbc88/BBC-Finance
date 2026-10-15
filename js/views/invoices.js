@@ -7,7 +7,7 @@ import {
 } from '../ui/components.js';
 import { DocSheet } from '../ui/docview.js';
 import { state, byId, paymentsOf, remindersOf, inScope, currentCompany } from '../lib/store.js';
-import { REMINDER_LEVELS } from '../lib/schema.js';
+import { REMINDER_LEVELS, quoteLabel } from '../lib/schema.js';
 import {
   addPayment, addRefund, updatePayment, deletePayment, cancelInvoice, uncancelInvoice, createCreditNote, removeCreditNote,
   markInvoiceSent, saveInternalNotes, reopenInvoice, setClarification, resolveClarification,
@@ -414,7 +414,8 @@ export function InvoiceDetailView({ id }) {
             [inv.revision ? 'Neu erstellt' : 'Erstellt', dateTime(inv.finalizedAt)],
             inv.revision && inv.firstFinalizedAt && ['Erstmals erstellt', dateTime(inv.firstFinalizedAt)],
             inv.sentAt && ['Versendet', dateTime(inv.sentAt)],
-            quote && ['Aus Angebot', html`<a href=${`#/quotes/${quote.id}`}>${quote.number}</a>`],
+            quote && ['Aus Angebot', html`<a href=${`#/quotes/${quote.id}`}>${quoteLabel(quote)}</a>`],
+            inv.contractId && byId('contracts', inv.contractId) && ['Zu Vertrag', html`<a href=${`#/contracts?open=${inv.contractId}`}>${byId('contracts', inv.contractId).title}</a>`],
           ]} />
         <//>
 

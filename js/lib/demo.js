@@ -3,12 +3,12 @@
 
 import { state, write, activeCompanies, byId, batch } from './store.js';
 import {
-  newCustomer, newService, newInvoice, newQuote, newExpense, newRecurring,
+  newCustomer, newService, newInvoice, newQuote, newExpense, newRecurring, newContract,
 } from './schema.js';
 import {
   saveCustomer, saveService, finalizeInvoice, addPayment, markInvoiceSent, cancelInvoice,
   createCreditNote, saveExpense, saveRecurring, finalizeQuote, setQuoteStatus, itemFromService,
-  saveInvoiceDraft, UserError,
+  saveInvoiceDraft, UserError, saveContract,
 } from './actions.js';
 import { fxForDoc, computeTotals } from './calc.js';
 import { todayISO, addMonths, addDays, nowISO } from './util.js';
@@ -166,6 +166,18 @@ async function buildDemo() {
     items: [{ ...itemFromService(services[5], co(1)) }],
   });
   await setQuoteStatus(q2.id, 'accepted');
+
+  // Verträge: einer aus dem angenommenen Angebot (noch nicht unterschrieben), einer läuft bald aus
+  await saveContract(newContract(co(1), {
+    customerId: customers[5].id, title: q2.items[0].name, quoteId: q2.id, status: 'open', billing: 'once',
+    amountCents: q2.totals.netCents, currency: 'USD', taxRate: Number(q2.items[0].taxRate) || 0,
+  }));
+  await saveContract(newContract(co(0), {
+    customerId: customers[2].id, title: 'SEO-Betreuung', refNumber: 'V-2025-07', status: 'signed', billing: 'monthly',
+    signedDate: addMonths(today, -11), startDate: addDays(addMonths(today, -11), 1), endDate: addDays(today, 25),
+    noticePeriod: '1 Monat zum Laufzeitende', amountCents: services[1].priceCents, currency: 'USD',
+    notes: 'Beispiel: läuft in Kürze aus – Verlängerung ansprechen.',
+  }));
 
   // Ausgaben
   for (const [daysBack, ci, vendor, category, description, currency, net, tax, method] of EXPENSES) {

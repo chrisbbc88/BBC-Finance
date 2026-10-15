@@ -4,6 +4,7 @@
 import { write, state, byId, all, paymentsOf } from './store.js';
 import {
   newInvoice, newItem, customerName, INTERVALS, DOC_CURRENCIES, isCustomer, newTodo,
+  quoteLabel, CONTRACT_STATUS, CONTRACT_BILLING,
 } from './schema.js';
 import {
   computeTotals, sumPayments, openCents, invoiceStatus, fxForDoc,
@@ -166,7 +167,8 @@ export async function saveCustomer(customer) {
 export function customerInUse(id) {
   return all('invoices').some((r) => r.customerId === id)
     || all('quotes').some((r) => r.customerId === id)
-    || all('recurring').some((r) => r.customerId === id);
+    || all('recurring').some((r) => r.customerId === id)
+    || all('contracts').some((r) => r.customerId === id);
 }
 
 export async function deleteCustomer(id) {
@@ -1143,7 +1145,7 @@ export async function setQuoteStatus(id, status) {
   await write(async (w) => {
     await w.put('quotes', rec);
     await w.audit({
-      action: QUOTE_ACTIONS[status], entity: 'quotes', entityId: id, label: q.number,
+      action: QUOTE_ACTIONS[status], entity: 'quotes', entityId: id, label: quoteLabel(q),
       prev: { status: q.status }, next: { status },
     });
   });
@@ -1176,11 +1178,159 @@ export async function convertQuoteToInvoice(quoteId) {
     await w.put('invoices', draft);
     await w.put('quotes', touch({ ...fresh, status: fresh.status === 'declined' ? fresh.status : 'accepted', invoiceId: draft.id, decidedAt: fresh.decidedAt || nowISO() }));
     await w.audit({
-      action: 'Angebot in Rechnung umgewandelt', entity: 'quotes', entityId: q.id, label: q.number,
+      action: 'Angebot in Rechnung umgewandelt', entity: 'quotes', entityId: q.id, label: quoteLabel(q),
       next: { invoiceDraftId: draft.id },
     });
   });
   return draft;
+}
+
+/* ---------- Hochgeladene Angebote (PDF) ---------- */
+
+/** Datei als Anhang in derselben Transaktion speichern. */
+async function putFile(w, file, ownerType, ownerId) {
+  const meta = {
+    id: uid(), name: file.name || 'Dokument.pdf', mime: file.blob.type || 'application/pdf',
+    size: file.blob.size, ownerType, ownerId, createdAt: nowISO(),
+  };
+  await w.blobPut(meta.id, file.blob);
+  await w.put('attachments', meta);
+  return meta;
+}
+async function dropFile(w, id) {
+  await w.del('attachments', id);
+  await w.blobDel(id);
+}
+
+const UPLOAD_STATUS = ['open', 'sent', 'accepted', 'declined'];
+
+/**
+ * Speichert ein außerhalb des Tools erstelltes Angebot samt PDF. `file` ({ blob, name }) ersetzt ein
+ * vorhandenes PDF. Das Angebot erhält keine Nummer aus dem Nummernkreis – die Nummer im Dokument steht in refNumber.
+ */
+export async function saveUploadedQuote(quote, file = null) {
+  const before = byId('quotes', quote.id);
+  if (before && before.source !== 'upload') fail('Nur hochgeladene Angebote lassen sich so bearbeiten.');
+  const company = byId('companies', quote.companyId);
+  const customer = byId('customers', quote.customerId);
+  if (!company) fail('Bitte das Unternehmen wählen, von dem das Angebot stammt.');
+  if (!customer) fail('Bitte den Kontakt wählen.');
+  if (!String(quote.title || '').trim()) fail('Bitte eine Bezeichnung eintragen, z. B. „Website-Relaunch“.');
+  if (!plausibleDate(quote.issueDate)) fail('Bitte das Angebotsdatum eintragen.');
+  if (quote.validUntil && (!plausibleDate(quote.validUntil) || quote.validUntil < quote.issueDate)) fail('„Gültig bis“ muss nach dem Angebotsdatum liegen.');
+  if (!DOC_CURRENCIES.includes(quote.currency)) fail('Bitte USD oder EUR wählen.');
+  const items = quote.items || [];
+  if (items.length !== 1 || !(Number(items[0].priceCents) >= 0)) fail('Bitte den Betrag des Angebots eintragen.');
+  const keepStatus = before && before.status === 'invoiced';
+  if (!keepStatus && !UPLOAD_STATUS.includes(quote.status)) fail('Unbekannter Status.');
+  if (!file && !(quote.attachmentIds || []).length) fail('Bitte das PDF des Angebots auswählen.');
+
+  const rec = prepareDraft({ ...quote, source: 'upload', number: null, title: String(quote.title).trim(), refNumber: String(quote.refNumber || '').trim() });
+  rec.items = [{ ...items[0], name: rec.title, qty: 1 }];
+  rec.totals = computeTotals(rec);
+  if (keepStatus) rec.status = 'invoiced';
+  rec.finalizedAt = (before && before.finalizedAt) || nowISO();
+  if (rec.status === 'sent' && !rec.sentAt) rec.sentAt = nowISO();
+  if (['accepted', 'declined'].includes(rec.status) && !rec.decidedAt) rec.decidedAt = nowISO();
+  if (['open', 'sent'].includes(rec.status)) rec.decidedAt = null;
+  rec.snapshot = snapshotOf(company, customer);
+  const d = diffFields(before, rec, ['updatedAt', 'createdAt', 'snapshot', 'totals', 'fx', 'attachmentIds']);
+  return write(async (w) => {
+    if (file) {
+      for (const aid of rec.attachmentIds || []) await dropFile(w, aid);
+      const meta = await putFile(w, file, 'quote', rec.id);
+      rec.attachmentIds = [meta.id];
+    }
+    await w.put('quotes', rec);
+    await w.audit({
+      action: before ? (file ? 'PDF-Angebot ersetzt' : 'PDF-Angebot geändert') : 'PDF-Angebot hochgeladen',
+      entity: 'quotes', entityId: rec.id, label: quoteLabel(rec),
+      prev: before ? d.prev : null, next: before ? d.next : { title: rec.title, totalCents: rec.totals.totalCents, currency: rec.currency },
+    });
+    return rec;
+  });
+}
+
+export async function deleteUploadedQuote(id) {
+  const q = byId('quotes', id);
+  if (!q) return;
+  if (q.source !== 'upload') fail('Im Tool erstellte Angebote bleiben erhalten. Du kannst sie als abgelehnt markieren.');
+  if (q.invoiceId && byId('invoices', q.invoiceId)) fail('Zu diesem Angebot gibt es eine Rechnung. Es bleibt deshalb erhalten.');
+  await write(async (w) => {
+    for (const aid of q.attachmentIds || []) await dropFile(w, aid);
+    for (const c of all('contracts').filter((x) => x.quoteId === id)) await w.put('contracts', touch({ ...c, quoteId: '' }));
+    await w.del('quotes', id);
+    await w.audit({ action: 'PDF-Angebot gelöscht', entity: 'quotes', entityId: id, label: quoteLabel(q), prev: stripLarge(q) });
+  });
+}
+
+/* ---------- Verträge ---------- */
+
+/** Vertrag speichern. `files` werden als PDFs angehängt, `removeIds` entfernt. */
+export async function saveContract(contract, { files = [], removeIds = [] } = {}) {
+  const before = byId('contracts', contract.id);
+  if (!byId('companies', contract.companyId)) fail('Bitte das Unternehmen wählen, mit dem der Vertrag besteht.');
+  if (!byId('customers', contract.customerId)) fail('Bitte den Kontakt wählen.');
+  if (!String(contract.title || '').trim()) fail('Bitte eine Bezeichnung eintragen, z. B. „SEO-Betreuung“.');
+  if (!CONTRACT_STATUS[contract.status]) fail('Unbekannter Status.');
+  if (!CONTRACT_BILLING.some((b) => b.id === contract.billing)) fail('Unbekannte Abrechnungsart.');
+  for (const [k, label] of [['signedDate', 'Unterschrieben am'], ['startDate', 'Beginn'], ['endDate', 'Ende']]) {
+    if (contract[k] && !plausibleDate(contract[k])) fail(`Bitte das Datum „${label}“ prüfen.`);
+  }
+  if (contract.startDate && contract.endDate && contract.endDate < contract.startDate) fail('Das Vertragsende liegt vor dem Beginn.');
+  if (contract.amountCents != null && !(Number(contract.amountCents) >= 0)) fail('Bitte den Betrag prüfen.');
+  if (!DOC_CURRENCIES.includes(contract.currency)) fail('Bitte USD oder EUR wählen.');
+  if (contract.quoteId && !byId('quotes', contract.quoteId)) fail('Das verknüpfte Angebot existiert nicht mehr.');
+  const rec = touch({
+    ...contract,
+    title: String(contract.title).trim(),
+    refNumber: String(contract.refNumber || '').trim(),
+    amountCents: contract.amountCents == null || contract.amountCents === '' ? null : Math.round(Number(contract.amountCents)),
+    attachmentIds: (contract.attachmentIds || []).filter((aid) => !removeIds.includes(aid)),
+  });
+  const d = diffFields(before, rec, ['updatedAt', 'createdAt', 'attachmentIds']);
+  return write(async (w) => {
+    for (const aid of removeIds) await dropFile(w, aid);
+    for (const f of files) rec.attachmentIds.push((await putFile(w, f, 'contract', rec.id)).id);
+    await w.put('contracts', rec);
+    const fileNote = [files.length && `${files.length} PDF hinzugefügt`, removeIds.length && `${removeIds.length} PDF entfernt`].filter(Boolean).join(', ');
+    await w.audit({
+      action: before ? 'Vertrag geändert' : 'Vertrag angelegt',
+      entity: 'contracts', entityId: rec.id, label: rec.title,
+      prev: before ? d.prev : null,
+      next: before ? { ...d.next, ...(fileNote ? { dateien: fileNote } : {}) } : { title: rec.title, status: rec.status, ...(fileNote ? { dateien: fileNote } : {}) },
+    });
+    return rec;
+  });
+}
+
+/** Vertrag löschen. Rechnungen und Vorlagen bleiben erhalten und verlieren nur die Verknüpfung. */
+export async function deleteContract(id) {
+  const c = byId('contracts', id);
+  if (!c) return;
+  await write(async (w) => {
+    for (const aid of c.attachmentIds || []) await dropFile(w, aid);
+    for (const inv of all('invoices').filter((x) => x.contractId === id)) {
+      const fresh = await w.get('invoices', inv.id);
+      if (fresh) await w.put('invoices', { ...fresh, contractId: '' });
+    }
+    for (const r of all('recurring').filter((x) => x.contractId === id)) await w.put('recurring', touch({ ...r, contractId: '' }));
+    await w.del('contracts', id);
+    await w.audit({ action: 'Vertrag gelöscht', entity: 'contracts', entityId: id, label: c.title, prev: c });
+  });
+}
+
+/** Rechnungsposition aus einem Vertrag (für Rechnungsentwurf und wiederkehrende Vorlage). */
+export function contractItem(contract) {
+  const billing = CONTRACT_BILLING.find((b) => b.id === contract.billing);
+  return newItem({
+    name: contract.title,
+    description: contract.refNumber ? `Gemäß Vertrag ${contract.refNumber}` : '',
+    qty: 1,
+    unit: billing && ['monthly', 'quarterly', 'semiannual', 'yearly'].includes(billing.id) ? { monthly: 'Monat', quarterly: 'Quartal', semiannual: 'Halbjahr', yearly: 'Jahr' }[billing.id] : 'Pauschale',
+    priceCents: contract.amountCents || 0,
+    taxRate: Number(contract.taxRate) || 0,
+  });
 }
 
 /* ---------- Ausgaben und Belege ---------- */
@@ -1316,6 +1466,7 @@ export async function runRecurring(id, { early = false } = {}) {
     intro: rec.intro,
     paymentTermDays: rec.paymentTermDays,
     recurringId: rec.id,
+    ...(rec.contractId ? { contractId: rec.contractId } : {}),
   });
   const next = addMonths(issueDate, months, rec.anchorDay);
   const ends = !!rec.endDate && next > rec.endDate;

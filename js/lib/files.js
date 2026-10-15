@@ -5,6 +5,29 @@ import { getOne } from './db.js';
 export const RECEIPT_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'application/pdf'];
 export const MAX_FILE_BYTES = 15 * 1024 * 1024;
 
+/**
+ * Prüft ein hochgeladenes Dokument (Angebot, Vertrag): nur echte PDF-Dateien bis 15 MB.
+ * Maßgeblich ist der Dateiinhalt („%PDF-“), nicht nur die Endung.
+ */
+export async function preparePdf(file) {
+  if (!file) throw new Error('Keine Datei ausgewählt.');
+  if (file.size > MAX_FILE_BYTES) throw new Error(`„${file.name}“ ist größer als 15 MB.`);
+  const head = await readHead(file, 5);
+  if (head !== '%PDF-') throw new Error(`„${file.name}“ ist keine PDF-Datei. Bitte das Dokument als PDF speichern und erneut hochladen.`);
+  const name = /\.pdf$/i.test(file.name || '') ? file.name : `${file.name || 'Dokument'}.pdf`;
+  const blob = file.type === 'application/pdf' ? file : new Blob([file], { type: 'application/pdf' });
+  return { blob, name };
+}
+
+function readHead(blob, n) {
+  return new Promise((resolve, reject) => {
+    const fr = new FileReader();
+    fr.onload = () => resolve(String.fromCharCode(...new Uint8Array(fr.result)));
+    fr.onerror = () => reject(fr.error);
+    fr.readAsArrayBuffer(blob.slice(0, n));
+  });
+}
+
 export function blobToBase64(blob) {
   return new Promise((resolve, reject) => {
     const fr = new FileReader();

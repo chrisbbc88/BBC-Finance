@@ -6,12 +6,13 @@ import {
 } from './ui/core.js';
 import { useErrorBoundary } from './vendor/preact-htm.js';
 import { Icon } from './ui/icons.js';
-import { Button, DialogHost, ToastHost, EmptyState, Segmented } from './ui/components.js';
+import { Button, DialogHost, ToastHost, EmptyState, Segmented, setMicErrorHandler } from './ui/components.js';
+import { VoiceButton } from './views/voice.js';
 import {
   state, load, byId, activeCompanies, currentCompany, setSetting, assetUrl,
 } from './lib/store.js';
 import { firstRun } from './lib/seed.js';
-import { customerName, APP_VERSION, APP_NEWS } from './lib/schema.js';
+import { customerName, quoteLabel, APP_VERSION, APP_NEWS } from './lib/schema.js';
 import { matches, parseNum, norm } from './lib/util.js';
 import { money } from './lib/format.js';
 
@@ -29,12 +30,14 @@ import { SettingsView, downloadBackup } from './views/settings.js';
 import { AuditView } from './views/audit.js';
 import { AppointmentsView, AppointmentDocHost, followUpAppointments } from './views/appointments.js';
 import { TodosView, dueTodoCount } from './views/todos.js';
+import { ContractsView } from './views/contracts.js';
 
 const NAV = [
   [{ path: '/', label: 'Dashboard', icon: 'dashboard', exact: true }],
   [
     { path: '/invoices', label: 'Rechnungen', icon: 'invoice' },
     { path: '/quotes', label: 'Angebote', icon: 'quote' },
+    { path: '/contracts', label: 'Verträge', icon: 'file' },
     { path: '/recurring', label: 'Wiederkehrend', icon: 'repeat' },
   ],
   [
@@ -122,11 +125,14 @@ function searchAll(q) {
       sub: money(i.totals ? i.totals.totalCents : 0, i.currency), href: i.status === 'draft' ? `/invoices/${i.id}/edit` : `/invoices/${i.id}`,
     })));
   add('Angebote', state.quotes
-    .filter((i) => matches(q, i.number, custName(i), (i.items || []).map((x) => x.name).join(' ')) || amountHit(q, i.totals && i.totals.totalCents))
+    .filter((i) => matches(q, i.number, i.refNumber, i.title, custName(i), (i.items || []).map((x) => x.name).join(' ')) || amountHit(q, i.totals && i.totals.totalCents))
     .map((i) => ({
-      key: i.id, label: `${i.number || 'Entwurf'}, ${custName(i) || 'ohne Kunde'}`,
+      key: i.id, label: `${quoteLabel(i)}${i.source === 'upload' ? ' (PDF)' : ''}, ${custName(i) || 'ohne Kunde'}`,
       sub: money(i.totals ? i.totals.totalCents : 0, i.currency), href: i.status === 'draft' ? `/quotes/${i.id}/edit` : `/quotes/${i.id}`,
     })));
+  add('Verträge', state.contracts
+    .filter((c) => matches(q, c.title, c.refNumber, custName(c), c.notes) || amountHit(q, c.amountCents))
+    .map((c) => ({ key: c.id, label: `${c.title}, ${custName(c) || 'ohne Kontakt'}`, sub: [c.refNumber, c.amountCents != null ? money(c.amountCents, c.currency) : ''].filter(Boolean).join(', '), href: `/contracts?open=${c.id}` })));
   add('Termine', state.appointments
     .filter((a) => matches(q, a.title, a.contactName, custName(a), a.agenda, a.outcome))
     .sort((a, b) => (`${a.date}${a.start}` < `${b.date}${b.start}` ? 1 : -1))
@@ -253,6 +259,7 @@ function Route({ route }) {
   if (a === 'customers') return b ? html`<${CustomerDetailView} id=${b} />` : html`<${CustomersView} />`;
   if (a === 'appointments') return html`<${AppointmentsView} params=${p} />`;
   if (a === 'todos') return html`<${TodosView} />`;
+  if (a === 'contracts') return html`<${ContractsView} key=${p.open || 'list'} params=${p} />`;
   if (a === 'services') return html`<${ServicesView} />`;
   if (a === 'expenses') return html`<${ExpensesView} />`;
   if (a === 'recurring') return html`<${RecurringView} />`;
@@ -344,6 +351,7 @@ function App() {
           <${CompanySwitcher} />
           <${GlobalSearch} />
           <div class="topbar-actions">
+            <${VoiceButton} />
             <${CurrencyToggle} />
             <${BackupButton} />
             <${Button} variant="primary" icon="plus" onClick=${() => navigate('/invoices/new')}>Neue Rechnung<//>
@@ -423,5 +431,6 @@ async function announceUpdate() {
   }
 }
 
+setMicErrorHandler((msg) => toast(msg, 'bad', 9000));
 window.addEventListener('unhandledrejection', (e) => { if (e.reason) showError(e.reason); });
 boot();

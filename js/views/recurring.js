@@ -23,7 +23,7 @@ export function intervalLabel(rec) {
   return def ? def.label : '';
 }
 
-function RecurringModal({ rec, onClose }) {
+export function RecurringModal({ rec, onClose }) {
   const isNew = !byId('recurring', rec.id);
   const [r, setR] = useState(() => clone(rec));
   const [busy, setBusy] = useState(false);

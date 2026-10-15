@@ -10,6 +10,7 @@ import {
 } from '../lib/reports.js';
 import { recurringDue } from '../lib/actions.js';
 import { quoteStatus } from '../lib/calc.js';
+import { contractEndsSoon, contractOverdue } from '../lib/pipeline.js';
 import { money, moneyCompact, date } from '../lib/format.js';
 import {
   todayISO, lastMonths, monthName, monthShort, periodRange, addDays,
@@ -100,6 +101,7 @@ export function DashboardView() {
   const drafts = allDrafts.filter((i) => !i.number);
   const toClarify = state.invoices.filter(inScope).filter((i) => i.clarify && i.status !== 'draft');
   const expiring = state.quotes.filter(inScope).filter((q) => ['open', 'sent'].includes(quoteStatus(q, today)) && q.validUntil && q.validUntil <= addDays(today, 7));
+  const endingContracts = state.contracts.filter(inScope).filter((c) => contractEndsSoon(c, today, 30) || contractOverdue(c, today));
 
   // Diagramm: je Unternehmen gestapelt, wenn „Alle“ gewählt ist und es mehrere gibt
   const stackCompanies = !company && companies.length > 1;
@@ -159,7 +161,7 @@ export function DashboardView() {
         <//>
       </div>
       <${Panel} title="Zu erledigen" class="dash-side">
-        ${(overdue.length + dueSoon.length + dueRecurring.length + toReview.length + allDrafts.length + expiring.length + toClarify.length) === 0
+        ${(overdue.length + dueSoon.length + dueRecurring.length + toReview.length + allDrafts.length + expiring.length + toClarify.length + endingContracts.length) === 0
           ? html`<p class="muted-text">Alles erledigt. Keine überfälligen Rechnungen, keine offenen Belege.</p>`
           : html`<ul class="todo">
             ${overdue.slice(0, 5).map((r) => html`<li key=${r.inv.id}>
@@ -206,6 +208,10 @@ export function DashboardView() {
               <span class="todo-icon"><${Icon} name="quote" /></span>
               <span class="todo-text"><strong>${expiring.length} ${expiring.length === 1 ? 'Angebot läuft' : 'Angebote laufen'}</strong>
                 <span class="cell-sub">in den nächsten 7 Tagen ab</span></span></a></li>`}
+            ${endingContracts.length > 0 && html`<li><a href="#/contracts">
+              <span class="todo-icon"><${Icon} name="file" /></span>
+              <span class="todo-text"><strong>${endingContracts.length} ${endingContracts.length === 1 ? 'Vertrag endet' : 'Verträge enden'}</strong>
+                <span class="cell-sub">in den nächsten 30 Tagen oder sind abgelaufen</span></span></a></li>`}
           </ul>`}
       <//>
     </div>

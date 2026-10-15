@@ -51,7 +51,8 @@ function BackupPanel() {
         list: [
           `${c.companies} Unternehmen, ${c.customers} Kunden, ${c.services} Leistungen`,
           `${c.invoices} Rechnungen, ${c.quotes} Angebote, ${c.payments} Zahlungen`,
-          `${c.expenses} Ausgaben, ${info.includesFiles ? `${info.fileCount} Belegdateien` : 'ohne Belegdateien'}`,
+          `${c.expenses} Ausgaben, ${info.includesFiles ? `${info.fileCount} Dateien (Belege, PDFs)` : 'ohne Dateien'}`,
+          ...(c.contracts ? [`${c.contracts} Verträge`] : []),
           ...((c.appointments || c.notes || c.todos) ? [`${c.appointments || 0} Termine, ${c.notes || 0} Einträge in der Kundendokumentation, ${c.todos || 0} To-dos`] : []),
         ],
         confirmLabel: 'Daten ersetzen', danger: true,
@@ -76,7 +77,7 @@ function BackupPanel() {
     ]} />
     <div class="button-row">
       <${Button} variant="primary" icon="download" busy=${busy === 'full'} disabled=${!!busy} onClick=${() => download(true)}>Backup herunterladen<//>
-      <${Button} icon="download" busy=${busy === 'lite'} disabled=${!!busy} onClick=${() => download(false)}>Ohne Belegdateien<//>
+      <${Button} icon="download" busy=${busy === 'lite'} disabled=${!!busy} onClick=${() => download(false)}>Ohne Dateien<//>
       <${Button} icon="upload" busy=${busy === 'restore'} disabled=${!!busy} onClick=${() => fileRef.current && fileRef.current.click()}>Backup einspielen<//>
       <input ref=${fileRef} type="file" class="visually-hidden" accept="application/json,.json" tabindex="-1"
         onChange=${(e) => { restore(e.target.files[0]); e.target.value = ''; }} />
@@ -236,7 +237,7 @@ function DataPanel() {
   async function clear() {
     const ok = await ask({
       title: 'Alle Kunden, Leistungen und Belege löschen?',
-      text: 'Kunden, Leistungen, Rechnungen, Angebote, Zahlungen, Ausgaben, Belegdateien, Termine, Kundendokumentation, To-dos, Nummernzähler und das Protokoll werden gelöscht – auch selbst angelegte Einträge. Unternehmen und Einstellungen bleiben erhalten.',
+      text: 'Kunden, Leistungen, Rechnungen, Angebote, Zahlungen, Ausgaben, Belegdateien, Verträge, hochgeladene PDFs, Termine, Kundendokumentation, To-dos, Nummernzähler und das Protokoll werden gelöscht – auch selbst angelegte Einträge. Unternehmen und Einstellungen bleiben erhalten.',
       confirmLabel: 'Löschen', danger: true,
     });
     if (!ok) return;

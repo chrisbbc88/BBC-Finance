@@ -7,6 +7,7 @@ import { Icon } from './icons.js';
 import { parseNum, norm } from '../lib/util.js';
 import { toCents } from '../lib/calc.js';
 import { centsToInput, numToInput } from '../lib/format.js';
+import { speechSupported, startListening, appendSpoken } from '../lib/speech.js';
 
 let seq = 0;
 export const useId = (prefix = 'f') => useMemo(() => `${prefix}-${++seq}`, []);
@@ -47,10 +48,49 @@ export function TextField({ label, hint, error, value, onInput, type = 'text', c
   <//>`;
 }
 
-export function TextArea({ label, hint, value, onInput, rows = 3, class: cls, ...rest }) {
+/**
+ * Mikrofon-Knopf: hört zu, solange er rot ist, und gibt erkannte Sätze an onText weiter.
+ * Ohne Spracherkennung im Browser wird er nicht angezeigt.
+ */
+export function MicButton({ onText, label = 'Diktieren', small = true, class: cls = '' }) {
+  const [on, setOn] = useState(false);
+  const [interim, setInterim] = useState('');
+  const stopRef = useRef(null);
+  useEffect(() => () => { if (stopRef.current) stopRef.current(); }, []);
+  if (!speechSupported()) return null;
+  function toggle() {
+    if (on) { if (stopRef.current) stopRef.current(); return; }
+    try {
+      stopRef.current = startListening({
+        onFinal: (t) => onText(t),
+        onInterim: setInterim,
+        onEnd: () => { setOn(false); setInterim(''); stopRef.current = null; },
+        onError: (msg) => showErrorToast(msg),
+      });
+      setOn(true);
+    } catch (err) { showErrorToast(err.message || String(err)); }
+  }
+  return html`<span class=${`mic-wrap ${cls}`}>
+    <button type="button" class=${`mic-btn${on ? ' is-on' : ''}${small ? ' is-small' : ''}`} onClick=${toggle}
+      title=${on ? 'Zuhören beenden' : label} aria-label=${on ? 'Zuhören beenden' : label} aria-pressed=${on}>
+      <${Icon} name="mic" size=${small ? 15 : 20} />
+    </button>
+    ${on && interim && html`<span class="mic-interim" aria-live="polite">${interim}</span>`}
+  </span>`;
+}
+let showErrorToast = (msg) => { /* wird von core gesetzt */ console.warn(msg); };
+export const setMicErrorHandler = (fn) => { showErrorToast = fn; };
+
+export function TextArea({ label, hint, value, onInput, rows = 3, class: cls, dictate = true, ...rest }) {
   const id = useId();
+  const ref = useRef(null);
+  // Diktierter Text wird an den aktuellen Inhalt angehängt (auch während getippt wird).
+  const add = (t) => { const cur = ref.current ? ref.current.value : value; if (onInput) onInput(appendSpoken(cur, t)); };
   return html`<${Field} label=${label} hint=${hint} class=${cls} htmlFor=${id}>
-    <textarea id=${id} class="input textarea" rows=${rows} value=${value ?? ''} onInput=${(e) => onInput && onInput(e.target.value)} ...${rest}></textarea>
+    <div class=${dictate && speechSupported() ? 'dictate-wrap' : ''}>
+      <textarea id=${id} ref=${ref} class="input textarea" rows=${rows} value=${value ?? ''} onInput=${(e) => onInput && onInput(e.target.value)} ...${rest}></textarea>
+      ${dictate && onInput && html`<${MicButton} onText=${add} class="dictate-mic" />`}
+    </div>
   <//>`;
 }
 

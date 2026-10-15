@@ -88,7 +88,7 @@ async function importReceipt(file) {
 
 /* ---------- Beleganzeige ---------- */
 
-function ReceiptView({ attachmentId }) {
+export function ReceiptView({ attachmentId }) {
   const [url, setUrl] = useState('');
   const [missing, setMissing] = useState(false);
   const meta = byId('attachments', attachmentId);

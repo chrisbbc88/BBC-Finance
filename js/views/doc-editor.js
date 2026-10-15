@@ -17,7 +17,7 @@ import {
 } from '../lib/schema.js';
 import {
   saveInvoiceDraft, finalizeInvoice, deleteInvoiceDraft, saveQuoteDraft, finalizeQuote, deleteQuote,
-  itemFromService, dueDateOf, validateDoc, peekNumber, duplicateAsDraft, nextContactNumber,
+  itemFromService, dueDateOf, validateDoc, peekNumber, duplicateAsDraft, nextContactNumber, contractItem,
 } from '../lib/actions.js';
 import { computeTotals, convertCents, fxForDoc, lineTotalCents, sumPayments } from '../lib/calc.js';
 import { fxFor, lastKnownRate, wantedRateDate } from '../lib/fx.js';
@@ -63,6 +63,16 @@ function initialDoc(coll, id, params) {
   let doc;
   if (coll === 'invoices' && params.copy && byId('invoices', params.copy)) {
     doc = duplicateAsDraft(byId('invoices', params.copy));
+  } else if (coll === 'invoices' && params.contract && byId('contracts', params.contract)) {
+    // Rechnung aus einem Vertrag: Unternehmen, Kontakt, Währung und Vertragsbetrag als Position.
+    const ct = byId('contracts', params.contract);
+    const co = byId('companies', ct.companyId) || company;
+    const q = ct.quoteId ? byId('quotes', ct.quoteId) : null;
+    doc = customerDefaults(newInvoice(co, { contractId: ct.id }), byId('customers', ct.customerId), co, coll);
+    doc.currency = ct.currency;
+    doc.items = [contractItem(ct)];
+    if (q && !q.invoiceId && q.status !== 'draft') doc.quoteId = q.id;
+    return doc;
   } else if (coll === 'invoices') {
     doc = newInvoice(company);
   } else if (params.copy && byId('quotes', params.copy)) {
@@ -358,6 +368,7 @@ export function DocEditorView({ coll, id, params }) {
     if (!saved) return;
     setDocRaw(clone(saved));
     setDirty(false);
+    clearNavGuard();   // sofort, nicht erst nach dem nächsten Rendern
     setProblems([]);
     toast('Entwurf gespeichert', 'good');
     if (id === 'new' || !id) { clearNavGuard(); navigate(`${K.list}/${saved.id}/edit`, { replace: true }); }

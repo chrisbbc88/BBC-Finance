@@ -5,18 +5,19 @@ import { uid, nowISO, todayISO } from './util.js';
 
 // Version 2 (Oktober 2026): Termine und Kundendokumentation. Ältere Backups bleiben einlesbar.
 // Version 3 (Oktober 2026): To-dos.
-export const SCHEMA_VERSION = 3;
+// Version 4 (Oktober 2026): Verträge und hochgeladene Angebote (PDF).
+export const SCHEMA_VERSION = 4;
 export const DB_NAME = 'bbc-finance';
 /** Stand der Anwendung – nach einem Update meldet das Tool einmal, dass alle Daten übernommen wurden. */
-export const APP_VERSION = '2026-10-14';
+export const APP_VERSION = '2026-10-15';
 /** Kurzer Hinweis auf die Neuerungen dieser Fassung (erscheint einmal nach dem Update). */
-export const APP_NEWS = 'Neu: To-dos mit Fälligkeit (bei Kontakten, aus Terminen, im Dashboard) und Nachfrage nach abgelaufenen Terminen.';
+export const APP_NEWS = 'Neu: Verträge und PDF-Angebote hochladen, Ablauf Termin → Angebot → Vertrag → Rechnung je Kontakt, dazu Sprachsteuerung („Sprechen“ oben rechts) und ein Mikrofon zum Diktieren in jedem größeren Textfeld.';
 
 /** Sammlungen, die vollständig im Arbeitsspeicher gehalten werden. */
 export const COLLECTIONS = [
   'companies', 'customers', 'services', 'invoices', 'quotes', 'payments',
   'expenses', 'attachments', 'recurring', 'reminders', 'rates', 'counters', 'audit', 'assets',
-  'appointments', 'notes', 'todos',
+  'appointments', 'notes', 'todos', 'contracts',
 ];
 
 export const BASE_CURRENCY = 'USD';
@@ -379,6 +380,58 @@ export function newQuote(company, over = {}) {
     fx: null, totals: null, snapshot: null,
     internalNotes: '', invoiceId: '',
     finalizedAt: null, sentAt: null, decidedAt: null,
+    ...over,
+  };
+}
+
+/** Bezeichnung eines Angebots für Listen und Protokoll – auch für hochgeladene ohne eigene Nummer. */
+export function quoteLabel(q) {
+  if (!q) return '';
+  if (q.number) return q.number;
+  if (q.source === 'upload') return q.refNumber || q.title || 'PDF-Angebot';
+  return 'Entwurf';
+}
+
+/** Ein außerhalb des Tools erstelltes Angebot (PDF). Es bekommt keine Nummer aus dem Nummernkreis. */
+export function newUploadedQuote(company, over = {}) {
+  return newQuote(company, {
+    source: 'upload', status: 'open', title: '', refNumber: '', attachmentIds: [],
+    validUntil: '', intro: '', paymentTerms: '', footer: '',
+    ...over,
+  });
+}
+
+export const CONTRACT_STATUS = {
+  open: { label: 'Offen', tone: 'info' },
+  signed: { label: 'Unterschrieben', tone: 'good' },
+  ended: { label: 'Beendet', tone: 'mute' },
+  declined: { label: 'Nicht zustande gekommen', tone: 'mute' },
+};
+export const CONTRACT_BILLING = [
+  { id: 'none', label: 'Keine Angabe' },
+  { id: 'once', label: 'Einmalig' },
+  { id: 'monthly', label: 'Monatlich' },
+  { id: 'quarterly', label: 'Quartalsweise' },
+  { id: 'semiannual', label: 'Halbjährlich' },
+  { id: 'yearly', label: 'Jährlich' },
+];
+
+export function newContract(company, over = {}) {
+  return {
+    ...stamp(),
+    companyId: company ? company.id : '',
+    customerId: '',
+    title: '',
+    refNumber: '',
+    status: 'open',
+    signedDate: '', startDate: '', endDate: '', noticePeriod: '',
+    billing: 'none',
+    amountCents: null,
+    currency: company ? company.currency : BASE_CURRENCY,
+    taxRate: company ? Number(company.defaultTaxRate) || 0 : 0,
+    quoteId: '',
+    attachmentIds: [],
+    notes: '',
     ...over,
   };
 }

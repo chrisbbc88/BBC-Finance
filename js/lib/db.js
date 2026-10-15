@@ -5,7 +5,7 @@ import { DB_NAME, COLLECTIONS } from './schema.js';
 
 // Version 2 ergänzt die Sammlungen für Termine und Kundendokumentation. Beim Öffnen werden nur
 // fehlende Sammlungen angelegt – vorhandene Daten bleiben unberührt.
-const DB_VERSION = 3;   // 3: To-dos
+const DB_VERSION = 4;   // 3: To-dos, 4: Verträge
 let dbPromise = null;
 
 const req = (r) => new Promise((resolve, reject) => {

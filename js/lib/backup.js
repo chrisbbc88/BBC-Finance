@@ -196,7 +196,8 @@ export function inspectBackup(json, files) {
         if (!isObj(r.totals) || !isNum(r.totals.totalCents) || !isNum(r.totals.netCents) || !isNum(r.totals.taxCents)) {
           throw broken(c, `Beleg ${r.number || ''} ohne Summen`);
         }
-        if (!r.number) throw broken(c, 'erstellter Beleg ohne Nummer');
+        // Hochgeladene Angebote (PDF) haben bewusst keine Nummer aus dem Nummernkreis.
+        if (!r.number && !(c === 'quotes' && r.source === 'upload')) throw broken(c, 'erstellter Beleg ohne Nummer');
       }
       if (!r.number) continue;
       // Doppelte Belegnummern würden beim Einspielen am eindeutigen Index scheitern – vorher prüfen.

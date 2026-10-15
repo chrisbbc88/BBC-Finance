@@ -120,6 +120,7 @@ export function CompanyEditView({ id }) {
     setLogo(null);
     setCRaw(clone(saved));
     setDirty(false);
+    clearNavGuard();   // sofort, nicht erst nach dem nächsten Rendern
     toast('Unternehmen gespeichert', 'good');
     if (!existing) navigateForce(`/companies/${saved.id}`);
   }

@@ -8,7 +8,7 @@ import {
 import { state, byId } from '../lib/store.js';
 import {
   newCustomer, customerName, customerPerson, LANGUAGES, DOC_CURRENCIES, INTERVALS, NOTE_KINDS, newNote, newAppointment, APPOINTMENT_STATUS,
-  CONTACT_KINDS, isCustomer,
+  CONTACT_KINDS, isCustomer, quoteLabel,
 } from '../lib/schema.js';
 import { saveCustomer, deleteCustomer, customerInUse, nextContactNumber, saveNote, deleteNote } from '../lib/actions.js';
 import { parseImprint, extractContactAI, normalizeUrl } from '../lib/imprint.js';
@@ -23,6 +23,9 @@ import {
 } from './shared.js';
 import { AppointmentModal, AppointmentList, sortAppointments, documentAppointment } from './appointments.js';
 import { TodoList, TodoQuickAdd, TodoModal, byDue } from './todos.js';
+import {
+  PipelinePanel, ContractModal, ContractTable, QuoteUploadModal, uploadQuoteFor, contractFor,
+} from './contracts.js';
 
 /* ---------- Formular ---------- */
 
@@ -311,6 +314,8 @@ export function CustomerDetailView({ id }) {
   const [noteEdit, setNoteEdit] = useState(null);
   const [apptEdit, setApptEdit] = useState(null);
   const [todoEdit, setTodoEdit] = useState(null);
+  const [contractEdit, setContractEdit] = useState(null);
+  const [uploadEdit, setUploadEdit] = useState(null);
   const [showDone, setShowDone] = useState(false);
   if (!c) {
     return html`<${EmptyState} icon="customers" title="Kontakt nicht gefunden" text="Dieser Kontakt existiert nicht mehr.">
@@ -369,7 +374,7 @@ export function CustomerDetailView({ id }) {
     { key: 'status', label: 'Status', render: (i) => html`<${InvoiceBadge} inv=${i} />` },
   ];
   const quoteColumns = [
-    { key: 'number', label: 'Nummer', render: (i) => html`<a href=${`#/quotes/${i.id}`} class="cell-main">${i.number || 'Entwurf'}</a>` },
+    { key: 'number', label: 'Nummer', render: (i) => html`<a href=${`#/quotes/${i.id}${i.status === 'draft' ? '/edit' : ''}`} class="cell-main">${quoteLabel(i)}</a>${i.source === 'upload' && html` <span class="pdf-tag">PDF</span>`}` },
     { key: 'company', label: 'Unternehmen', render: (i) => html`<${CompanyTag} id=${i.companyId} />` },
     { key: 'date', label: 'Datum', render: (i) => date(i.issueDate) },
     { key: 'valid', label: 'Gültig bis', render: (i) => date(i.validUntil) },
@@ -385,6 +390,8 @@ export function CustomerDetailView({ id }) {
       <${Button} variant="primary" icon="plus" onClick=${() => navigate(`/invoices/new?customer=${id}`)}>Rechnung schreiben<//>
       <${Menu} items=${[
         { label: 'Angebot schreiben', icon: 'quote', onClick: () => navigate(`/quotes/new?customer=${id}`) },
+        { label: 'Angebot hochladen (PDF)', icon: 'upload', onClick: () => setUploadEdit(uploadQuoteFor(id)) },
+        { label: 'Vertrag anlegen', icon: 'file', onClick: () => setContractEdit(contractFor(id)) },
         !isCustomer(c) && { label: 'Zum Kunden machen', icon: 'good', onClick: () => switchKind('customer') },
         isCustomer(c) && !invoices.length && { label: 'Als Kontakt führen', icon: 'customers', onClick: () => switchKind('contact') },
         { label: 'Löschen', icon: 'trash', danger: true, disabled: customerInUse(id), onClick: remove },
@@ -397,6 +404,13 @@ export function CustomerDetailView({ id }) {
       <${Stat} label="Davon überfällig" value=${mc(pick(stats, 'overdue'))} tone=${pick(stats, 'overdue') ? 'bad' : ''} sub=${`≈ ${ma(pickAlt(stats, 'overdue'))}`} />
       <${Stat} label="Bezahlt" value=${mc(pick(stats, 'paid'))} sub=${`≈ ${ma(pickAlt(stats, 'paid'))}`} />
     </div>
+
+    <${PipelinePanel} customerId=${id} on=${{
+      appointment: () => setApptEdit(newApptFor(c)),
+      uploadQuote: () => setUploadEdit(uploadQuoteFor(id)),
+      contract: setContractEdit,
+      openContract: setContractEdit,
+    }} />
 
     <div class="split">
       <div class="split-main">
@@ -420,9 +434,17 @@ export function CustomerDetailView({ id }) {
           <${DataTable} columns=${invColumns} rows=${invoices} onRowClick=${(i) => navigate(`/invoices/${i.id}`)}
             empty=${html`<p class="panel-empty">Noch keine Rechnungen für diesen Kunden.</p>`} />
         <//>
-        <${Panel} title="Angebote" flush>
-          <${DataTable} columns=${quoteColumns} rows=${quotes} onRowClick=${(i) => navigate(`/quotes/${i.id}`)}
-            empty=${html`<p class="panel-empty">Noch keine Angebote für diesen Kunden.</p>`} />
+        <${Panel} title="Angebote" flush action=${html`<div class="panel-head-actions">
+            <${Button} small icon="upload" onClick=${() => setUploadEdit(uploadQuoteFor(id))}>PDF hochladen<//>
+            <${Button} small icon="quote" onClick=${() => navigate(`/quotes/new?customer=${id}`)}>Schreiben<//>
+          </div>`}>
+          <${DataTable} columns=${quoteColumns} rows=${quotes} onRowClick=${(i) => navigate(`/quotes/${i.id}${i.status === 'draft' ? '/edit' : ''}`)}
+            empty=${html`<p class="panel-empty">Noch keine Angebote für diesen Kontakt.</p>`} />
+        <//>
+        <${Panel} title="Verträge" flush action=${html`<div class="panel-head-actions">
+            <${Button} small icon="file" onClick=${() => setContractEdit(contractFor(id))}>Vertrag anlegen<//>
+          </div>`}>
+          <${ContractTable} customerId=${id} onOpen=${setContractEdit} />
         <//>
       </div>
       <aside class="split-side">
@@ -455,6 +477,8 @@ export function CustomerDetailView({ id }) {
     ${noteEdit && html`<${NoteModal} note=${noteEdit} onClose=${() => setNoteEdit(null)} />`}
     ${apptEdit && html`<${AppointmentModal} key=${apptEdit.id} appointment=${apptEdit} onClose=${() => setApptEdit(null)} />`}
     ${todoEdit && html`<${TodoModal} key=${todoEdit.id} todo=${todoEdit} onClose=${() => setTodoEdit(null)} />`}
+    ${contractEdit && html`<${ContractModal} key=${contractEdit.id} contract=${contractEdit} onClose=${() => setContractEdit(null)} />`}
+    ${uploadEdit && html`<${QuoteUploadModal} key=${uploadEdit.id} quote=${uploadEdit} onClose=${() => setUploadEdit(null)} />`}
   `;
 }
 
