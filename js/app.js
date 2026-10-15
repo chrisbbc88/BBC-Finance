@@ -7,7 +7,7 @@ import {
 import { useErrorBoundary } from './vendor/preact-htm.js';
 import { Icon } from './ui/icons.js';
 import { Button, DialogHost, ToastHost, EmptyState, Segmented, setMicErrorHandler } from './ui/components.js';
-import { VoiceButton } from './views/voice.js';
+import { VoiceButton, VoiceHost } from './views/voice.js';
 import {
   state, load, byId, activeCompanies, currentCompany, setSetting, assetUrl,
 } from './lib/store.js';
@@ -371,6 +371,7 @@ function App() {
       <div class="nav-scrim" onClick=${() => setNavOpen(false)}></div>
     </div>
     <${AppointmentDocHost} />
+    <${VoiceHost} />
     <${DialogHost} />
     <${ToastHost} />
   `;

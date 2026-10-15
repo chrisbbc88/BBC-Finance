@@ -1,7 +1,7 @@
 // Sprachbefehle: sprechen (oder tippen) → Vorschau → ausführen.
 
 import { html, useState, useEffect, useRef, navigate, toast, attempt } from '../ui/core.js';
-import { Button, Modal, Notice, MicButton } from '../ui/components.js';
+import { Button, Notice } from '../ui/components.js';
 import { Icon } from '../ui/icons.js';
 import { state, byId } from '../lib/store.js';
 import {
@@ -134,7 +134,12 @@ function ActionCard({ a, plan, onToggle, onToggleItem }) {
 }
 const warn = (a) => (a.warnings && a.warnings.length ? html`<p class="field-hint tone-warn">${a.warnings.join(' ')}</p>` : null);
 
-export function VoiceModal({ onClose }) {
+/**
+ * Sprachbefehl als kleines Fenster unten rechts. Es liegt über der Seite, ohne sie abzudunkeln,
+ * und wird am Rand der App gerendert – nicht in der Kopfleiste, deren Unschärfe-Effekt
+ * fest positionierte Kinder auf ihre eigene Höhe beschneiden würde.
+ */
+export function VoicePanel({ onClose }) {
   const [text, setText] = useState('');
   const [interim, setInterim] = useState('');
   const [listening, setListening] = useState(false);
@@ -162,6 +167,12 @@ export function VoiceModal({ onClose }) {
     } catch (err) { toast(err.message || String(err), 'bad'); }
   }
   useEffect(() => { if (canSpeak && hasKey) listen(); return () => { if (stopRef.current) stopRef.current(); }; }, []);
+  // Escape schließt das Fenster – aber nicht, solange ein anderes Fenster (Dialog) darüber offen ist.
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape' && !document.querySelector('.modal-backdrop')) onClose(); };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [onClose]);
 
   async function understand() {
     if (stopRef.current) stopRef.current();
@@ -195,53 +206,86 @@ export function VoiceModal({ onClose }) {
   }));
   const active = plan ? plan.actions.filter((a) => !a.off).length : 0;
 
-  if (invite) return html`<${InviteModal} appointment=${invite} justCreated onClose=${() => setInvite(null)} />`;
 
-  return html`<${Modal} title="Sprachbefehl" onClose=${onClose} size="lg"
-    footer=${html`
-      <${Button} onClick=${onClose}>${results ? 'Schließen' : 'Abbrechen'}<//>
+  const footer = html`
       ${!results && !plan && html`<${Button} variant="primary" icon="sparkle" busy=${busy === 'ai'} disabled=${!hasKey || !text.trim()} onClick=${understand}>Verstehen<//>`}
       ${plan && html`<${Button} onClick=${() => setPlan(null)}>Ändern<//>`}
       ${plan && plan.actions.length > 0 && html`<${Button} variant="primary" icon="check" busy=${busy === 'run'} disabled=${!active} onClick=${run}>Ausführen<//>`}
-      ${results && html`<${Button} variant="primary" icon="mic" onClick=${() => { setText(''); setResults(null); listen(); }}>Nächster Befehl<//>`}`}>
-    ${!hasKey && html`<${Notice} tone="warn">Sprachbefehle laufen über die Anthropic-API. Trage dafür unter Einstellungen den API-Key ein (derselbe wie für die Belegerkennung).<//>`}
-    ${!results && !plan && html`
-      <div class="voice-stage">
-        ${canSpeak
-          ? html`<${MicButton} small=${false} onText=${(t) => setText((cur) => appendSpoken(cur, t))} label="Sprechen" />`
-          : html`<p class="muted-text">Dieser Browser hat keine Spracherkennung (Chrome oder Safari verwenden). Du kannst den Befehl auch eintippen.</p>`}
-        ${listening ? html`<span class="strong">Ich höre zu …</span>` : (canSpeak && html`<span class="muted-text">Auf das Mikrofon tippen und sprechen</span>`)}
-        ${interim && html`<span class="mic-interim">${interim}</span>`}
-      </div>
-      <textarea class="input textarea" rows="3" aria-label="Befehl" placeholder="Was soll ich tun?" value=${text} onInput=${(e) => setText(e.target.value)}></textarea>
-      <ul class="voice-examples">
-        <li>„Trag für Nordlicht Immobilien drei To-dos ein: Angebot schicken bis Freitag, Referenzen raussuchen, Rückruf Montag.“</li>
-        <li>„Termin mit Frau Petersen nächsten Dienstag um 10 Uhr über Build Buddy Consulting, eine Stunde, Thema Website-Relaunch.“</li>
-        <li>„Den Termin von heute mit Alpenblick dokumentieren: Budget steht, nächste Woche Angebot. To-do: Angebot bis Mittwoch.“</li>
-        <li>„Was steht heute an?“</li>
+      ${results && html`<${Button} onClick=${onClose}>Fertig<//>`}
+      ${results && html`<${Button} variant="primary" icon="mic" onClick=${() => { setText(''); setResults(null); listen(); }}>Nächster Befehl<//>`}`;
+
+  return html`<section class="voice-panel" role="dialog" aria-label="Sprachbefehl">
+    <header class="voice-panel-head">
+      <span class=${`voice-panel-dot${listening ? ' is-on' : ''}`}><${Icon} name="mic" size=${15} /></span>
+      <strong>Sprachbefehl</strong>
+      ${listening && html`<span class="voice-panel-live">hört zu</span>`}
+      <button type="button" class="voice-panel-close" onClick=${onClose} title="Schließen" aria-label="Schließen"><${Icon} name="x" size=${17} /></button>
+    </header>
+    <div class="voice-panel-body">
+      ${!hasKey && html`<${Notice} tone="warn">Sprachbefehle laufen über die Anthropic-API. Trage dafür unter Einstellungen den API-Key ein (derselbe wie für die Belegerkennung).<//>`}
+      ${!results && !plan && html`
+        <div class="voice-stage">
+          ${canSpeak
+            ? html`<button type="button" class=${`mic-btn${listening ? ' is-on' : ''}`} onClick=${listen} aria-pressed=${listening}
+                title=${listening ? 'Zuhören beenden' : 'Mikrofon einschalten'} aria-label=${listening ? 'Zuhören beenden' : 'Mikrofon einschalten'}><${Icon} name="mic" size=${22} /></button>`
+            : html`<p class="muted-text">Dieser Browser hat keine Spracherkennung (Chrome oder Safari verwenden). Du kannst den Befehl auch eintippen.</p>`}
+          <div class="voice-stage-text">
+            ${listening ? html`<span class="strong">Ich höre zu …</span>` : (canSpeak && html`<span class="muted-text">Auf das Mikrofon tippen und sprechen</span>`)}
+            ${interim && html`<span class="mic-interim">${interim}</span>`}
+          </div>
+        </div>
+        <textarea class="input textarea" rows="3" aria-label="Befehl" placeholder="Was soll ich tun?" value=${text} onInput=${(e) => setText(e.target.value)}></textarea>
+        <details class="voice-examples">
+          <summary>Beispiele</summary>
+          <ul>
+            <li>„Trag für Nordlicht Immobilien drei To-dos ein: Angebot schicken bis Freitag, Referenzen raussuchen, Rückruf Montag.“</li>
+            <li>„Termin mit Frau Petersen nächsten Dienstag um 10 Uhr über Build Buddy Consulting, eine Stunde, Thema Website-Relaunch.“</li>
+            <li>„Den Termin von heute mit Alpenblick dokumentieren: Budget steht, nächste Woche Angebot. To-do: Angebot bis Mittwoch.“</li>
+            <li>„Was steht heute an?“</li>
+          </ul>
+        </details>`}
+      ${plan && html`
+        <p class="muted-text voice-said">„${text}“</p>
+        ${plan.answers.map((t) => html`<div class="voice-answer">${t}</div>`)}
+        ${plan.actions.length > 0 && html`<p class="field-hint">Bitte prüfen. Abgewählte Punkte werden nicht angelegt.</p>`}
+        <div class="voice-plan">
+          ${plan.actions.map((a, i) => html`<${ActionCard} key=${i} a=${a} plan=${plan} onToggle=${() => toggle(i)} onToggleItem=${(k) => toggleItem(i, k)} />`)}
+        </div>`}
+      ${results && html`<ul class="voice-done">
+        ${results.map((r) => html`<li class=${r.ok ? '' : 'tone-bad'}>${r.ok ? '✓' : '✕'} ${r.text}
+          ${r.href && html` · <a href=${`#${r.href}`}>Öffnen</a>`}
+          ${r.appointment && html` · <button type="button" class="link-btn" onClick=${() => setInvite(r.appointment)}>Einladung</button>`}</li>`)}
       </ul>`}
-    ${plan && html`
-      <p class="muted-text">„${text}“</p>
-      ${plan.answers.map((t) => html`<div class="voice-answer">${t}</div>`)}
-      ${plan.actions.length > 0 && html`<p class="field-hint">Bitte prüfen. Abgewählte Punkte werden nicht angelegt.</p>`}
-      <div class="voice-plan">
-        ${plan.actions.map((a, i) => html`<${ActionCard} key=${i} a=${a} plan=${plan} onToggle=${() => toggle(i)} onToggleItem=${(k) => toggleItem(i, k)} />`)}
-      </div>`}
-    ${results && html`<ul class="voice-done">
-      ${results.map((r) => html`<li class=${r.ok ? '' : 'tone-bad'}>${r.ok ? '✓' : '✕'} ${r.text}
-        ${r.href && html` · <a href=${`#${r.href}`} onClick=${onClose}>Öffnen</a>`}
-        ${r.appointment && html` · <button type="button" class="link-btn" onClick=${() => setInvite(r.appointment)}>Einladung</button>`}</li>`)}
-    </ul>`}
-  <//>`;
+    </div>
+    <footer class="voice-panel-foot">${footer}</footer>
+  </section>
+  ${invite && html`<${InviteModal} appointment=${invite} justCreated onClose=${() => setInvite(null)} />`}`;
+}
+
+/* ---------- Öffnen und Schließen ---------- */
+
+let voiceOpen = false;
+const voiceListeners = new Set();
+function setVoiceOpen(v) { voiceOpen = v; voiceListeners.forEach((fn) => fn(v)); }
+export const toggleVoice = () => setVoiceOpen(!voiceOpen);
+function useVoiceOpen() {
+  const [open, setOpen] = useState(voiceOpen);
+  useEffect(() => { voiceListeners.add(setOpen); return () => voiceListeners.delete(setOpen); }, []);
+  return open;
+}
+
+/** Am Rand der App einbinden (nicht in der Kopfleiste). */
+export function VoiceHost() {
+  const open = useVoiceOpen();
+  return open ? html`<${VoicePanel} onClose=${() => setVoiceOpen(false)} />` : null;
 }
 
 /** Knopf oben in der Leiste. */
 export function VoiceButton() {
-  const [open, setOpen] = useState(false);
-  return html`
-    <button type="button" class="backup-btn voice-btn" onClick=${() => setOpen(true)} title="Sprachbefehl: To-dos, Termine, Notizen per Sprache">
-      <${Icon} name="mic" /><span>Sprechen</span>
-    </button>
-    ${open && html`<${VoiceModal} onClose=${() => setOpen(false)} />`}`;
+  const open = useVoiceOpen();
+  return html`<button type="button" class=${`backup-btn voice-btn${open ? ' is-open' : ''}`} onClick=${toggleVoice} aria-pressed=${open}
+    title="Sprachbefehl: To-dos, Termine, Notizen per Sprache">
+    <${Icon} name="mic" /><span>Sprechen</span>
+  </button>`;
 }
 export { navigate };
