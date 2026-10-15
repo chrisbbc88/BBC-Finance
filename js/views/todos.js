@@ -22,7 +22,7 @@ export function dueInfo(t, today = todayISO()) {
   if (!t.due) return { text: 'ohne Termin', tone: '' };
   if (t.done) return { text: date(t.due), tone: '' };
   if (t.due < today) { const d = daysBetween(t.due, today); return { text: `überfällig seit ${d} ${d === 1 ? 'Tag' : 'Tagen'}`, tone: 'bad' }; }
-  if (t.due === today) return { text: 'heute', tone: 'warn' };
+  if (t.due === today) return { text: 'heute fällig', tone: 'good' };
   if (t.due === addDays(today, 1)) return { text: 'morgen', tone: '' };
   return { text: `bis ${date(t.due)}`, tone: '' };
 }
@@ -42,7 +42,9 @@ export function TodoList({ items, showCustomer = true, onEdit, empty }) {
       const due = dueInfo(t);
       const c = t.customerId ? byId('customers', t.customerId) : null;
       const appt = t.appointmentId ? byId('appointments', t.appointmentId) : null;
-      return html`<li key=${t.id} class=${t.done ? 'is-done' : ''}>
+      // Offene To-dos: heute fällig grün, überfällig rot hinterlegt.
+      const mark = t.done ? 'is-done' : due.tone === 'bad' ? 'is-overdue' : due.tone === 'good' ? 'is-today' : '';
+      return html`<li key=${t.id} class=${mark}>
         <input type="checkbox" class="todo-check" checked=${!!t.done} aria-label=${`${t.title} ${t.done ? 'wieder öffnen' : 'erledigt'}`} onChange=${() => toggle(t)} />
         <button type="button" class="todo-body" onClick=${() => onEdit && onEdit(t)}>
           <span class="todo-title">${t.title}</span>
