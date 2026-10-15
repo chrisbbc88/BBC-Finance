@@ -16,13 +16,66 @@ import { dateTime } from '../lib/format.js';
 import { fileSize } from '../lib/util.js';
 import { REMINDER_LEVELS, DEFAULT_SETTINGS } from '../lib/schema.js';
 import { seedCompanies } from '../lib/seed.js';
+import { Icon } from '../ui/icons.js';
+import { folderSupported, getBackupFolder, pickBackupFolder, clearBackupFolder, saveToBackupFolder } from '../lib/backupfolder.js';
 
-/** Backup-Datei herunterladen und den Zähler „Änderungen seit letztem Backup“ zurücksetzen. */
+/**
+ * Backup speichern und den Zähler „Änderungen seit letztem Backup“ zurücksetzen.
+ * Ist ein Backup-Ordner gewählt, landet die Datei dort, sonst wie bisher unter Downloads.
+ * Ergebnis: { size, folder } – folder ist der Ordnername oder leer (Downloads); note erklärt einen Rückfall.
+ */
 export async function downloadBackup(includeFiles = true) {
-  const blob = await buildBackupBlob({ includeFiles });
-  saveBlob(blob, backupFileName());
+  const name = backupFileName();
+  const res = await saveToBackupFolder(name, () => buildBackupBlob({ includeFiles }));
+  let note = '';
+  if (!res.saved) {
+    const blob = res.blob || await buildBackupBlob({ includeFiles });
+    saveBlob(blob, name);
+    res.size = blob.size;
+    if (res.reason === 'denied') note = `Kein Zugriff auf den Ordner „${res.folder}“ – unter Downloads gespeichert.`;
+    if (res.reason === 'error') note = `Der Ordner „${res.folder}“ war nicht beschreibbar (verschoben oder gelöscht?) – unter Downloads gespeichert.`;
+  }
   await markBackupDone();
-  return blob.size;
+  return { size: res.size, folder: res.saved ? res.folder : '', note };
+}
+
+/** Meldung nach dem Speichern eines Backups. */
+export function backupToast(r) {
+  if (!r) return;
+  if (r.note) { toast(r.note, 'info', 9000); return; }
+  toast(r.folder ? `Backup im Ordner „${r.folder}“ gespeichert (${fileSize(r.size)})` : `Backup gespeichert (${fileSize(r.size)})`, 'good');
+}
+
+/** Backup-Ordner wählen, anzeigen, ändern, entfernen. */
+function BackupFolderSetting() {
+  const [folder, setFolder] = useState(undefined);
+  useEffect(() => { getBackupFolder().then((h) => setFolder(h ? h.name : '')); }, []);
+  if (!folderSupported()) {
+    return html`<p class="field-hint">Einen festen Backup-Ordner kann nur Chrome oder Edge ansteuern. In diesem Browser landen Backups im Download-Ordner.</p>`;
+  }
+  if (folder === undefined) return null;
+  async function pick() {
+    const h = await attempt(() => pickBackupFolder());
+    if (h) { setFolder(h.name); toast(`Backups werden ab jetzt im Ordner „${h.name}“ gespeichert.`, 'good'); }
+  }
+  async function clear() {
+    await clearBackupFolder();
+    setFolder('');
+    toast('Backups landen wieder im Download-Ordner.', 'info');
+  }
+  return html`<div class="backup-folder">
+    <div class="backup-folder-info">
+      <span class="backup-folder-label">Backup-Ordner</span>
+      ${folder ? html`<strong class="backup-folder-name"><${Icon} name="file" size=${15} /> ${folder}</strong>` : html`<span class="muted-text">Download-Ordner des Browsers</span>`}
+    </div>
+    <div class="button-row">
+      <${Button} small icon="file" onClick=${pick}>${folder ? 'Anderen Ordner wählen' : 'Ordner wählen'}<//>
+      ${folder && html`<${Button} small variant="ghost" onClick=${clear}>Wieder Downloads verwenden<//>`}
+    </div>
+    <p class="field-hint">${folder
+      ? 'Ein Klick auf „Backup“ speichert direkt in diesen Ordner. Nach einem Neustart von Chrome fragt der Browser beim ersten Backup einmal nach der Erlaubnis – „Bei jedem Besuch erlauben“ wählen, dann entfällt auch das.'
+      : 'Wähle einmal einen Ordner, z. B. „BBC Finance Backups“ in Dokumenten oder in deinem Cloud-Ordner. Danach genügt ein Klick auf „Backup“.'}</p>
+  </div>`;
 }
 
 function BackupPanel() {
@@ -33,9 +86,9 @@ function BackupPanel() {
 
   async function download(includeFiles) {
     setBusy(includeFiles ? 'full' : 'lite');
-    const size = await attempt(() => downloadBackup(includeFiles));
+    const r = await attempt(() => downloadBackup(includeFiles));
     setBusy('');
-    if (size != null) toast(`Backup gespeichert (${fileSize(size)})`, 'good');
+    backupToast(r);
   }
 
   async function restore(file) {
@@ -82,6 +135,7 @@ function BackupPanel() {
       <input ref=${fileRef} type="file" class="visually-hidden" accept="application/json,.json" tabindex="-1"
         onChange=${(e) => { restore(e.target.files[0]); e.target.value = ''; }} />
     </div>
+    <${BackupFolderSetting} />
     <${Checkbox} label="Beim Schließen warnen, wenn es Änderungen ohne Backup gibt" checked=${s.warnOnClose !== false}
       onChange=${(v) => attempt(() => setSetting('warnOnClose', v))} />
     <p class="field-hint">Der API-Key ist nie Teil des Backups. Lege Backup-Dateien nicht in ein öffentliches GitHub-Repository.</p>

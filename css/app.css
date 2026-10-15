@@ -935,3 +935,10 @@ a.cell-main:hover { text-decoration: underline; }
 .todo-list li.is-today { background: var(--good-bg); border-left-color: var(--good-mark); }
 .todo-list li.is-overdue { background: var(--bad-bg); border-left-color: var(--bad-mark); }
 .todo-list li.is-today .cell-sub .tone-good, .todo-list li.is-overdue .cell-sub .tone-bad { font-weight: 600; }
+
+/* Backup-Ordner */
+.backup-folder { margin: 14px 0 6px; padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--r-m); background: var(--surface-2); }
+.backup-folder-info { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
+.backup-folder-label { font-size: 13px; color: var(--muted); }
+.backup-folder .field-hint { margin: 8px 0 0; }
+.backup-folder-name { display: inline-flex; align-items: center; gap: 6px; }

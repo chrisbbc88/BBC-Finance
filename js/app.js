@@ -26,7 +26,7 @@ import { ExpensesView } from './views/expenses.js';
 import { RecurringView } from './views/recurring.js';
 import { FinanceView, ReportsView } from './views/reports.js';
 import { CompaniesView, CompanyEditView } from './views/companies.js';
-import { SettingsView, downloadBackup } from './views/settings.js';
+import { SettingsView, downloadBackup, backupToast } from './views/settings.js';
 import { AuditView } from './views/audit.js';
 import { AppointmentsView, AppointmentDocHost, followUpAppointments } from './views/appointments.js';
 import { TodosView, dueTodoCount } from './views/todos.js';
@@ -226,9 +226,9 @@ function BackupButton() {
   const n = state.settings.changesSinceBackup || 0;
   async function run() {
     setBusy(true);
-    const size = await attempt(() => downloadBackup(true));
+    const r = await attempt(() => downloadBackup(true));
     setBusy(false);
-    if (size != null) toast('Backup gespeichert', 'good');
+    backupToast(r);
   }
   return html`<button type="button" class=${`backup-btn${n ? ' has-changes' : ''}`} onClick=${run} disabled=${busy}
     title=${n ? `${n} ${n === 1 ? 'Änderung' : 'Änderungen'} seit dem letzten Backup` : 'Alles gesichert'}>

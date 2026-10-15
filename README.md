@@ -41,7 +41,7 @@ Neue Funktionen legen beim ersten Start nur zusätzliche, leere Sammlungen an; b
 | Thema | So ist es gelöst |
 |---|---|
 | **Daten** | IndexedDB im Browser dieses Geräts. Nichts wird an einen Server übertragen. |
-| **Sicherung** | *Backup* oben rechts lädt eine JSON-Datei mit allem, inklusive Belegdateien. Der Zähler daneben zeigt Änderungen seit dem letzten Backup. Einspielen unter *Einstellungen*. |
+| **Sicherung** | *Backup* oben rechts speichert eine JSON-Datei mit allem, inklusive Belegdateien – im Download-Ordner oder, in Chrome und Edge, in einem festen **Backup-Ordner** (*Einstellungen → Backup-Ordner → Ordner wählen*; danach genügt ein Klick, nach einem Browser-Neustart fragt Chrome einmal nach der Erlaubnis). Die Ordner-Freigabe gilt nur für diesen Browser und steht nicht im Backup. Der Zähler daneben zeigt Änderungen seit dem letzten Backup. Einspielen unter *Einstellungen*. |
 | **Mehrere Geräte** | Jedes Gerät hat seinen eigenen Stand. Übertragen per Backup-Datei. |
 | **Browser** | Chrome, Edge oder Firefox. Safari kann Website-Daten nach sieben Tagen ohne Besuch löschen – dort nur mit regelmäßigem Backup verwenden. |
 | **Online oder lokal** | Die GitHub-Pages-Adresse und die per Doppelklick geöffnete Datei haben getrennte Datenbestände. Für die tägliche Arbeit einen Weg wählen und dabei bleiben. |

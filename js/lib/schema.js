@@ -9,9 +9,9 @@ import { uid, nowISO, todayISO } from './util.js';
 export const SCHEMA_VERSION = 4;
 export const DB_NAME = 'bbc-finance';
 /** Stand der Anwendung – nach einem Update meldet das Tool einmal, dass alle Daten übernommen wurden. */
-export const APP_VERSION = '2026-10-15.2';
+export const APP_VERSION = '2026-10-15.3';
 /** Kurzer Hinweis auf die Neuerungen dieser Fassung (erscheint einmal nach dem Update). */
-export const APP_NEWS = 'Neu: Leistungen mit Nummer und Tarif (Starter/Standard), Import und Export als Excel; Sprachbefehl als kleines Fenster unten rechts.';
+export const APP_NEWS = 'Neu: fester Backup-Ordner (Einstellungen → Backup-Ordner), To-dos farbig nach Fälligkeit, Leistungen mit Nummer und Tarif samt Excel-Import.';
 
 /** Sammlungen, die vollständig im Arbeitsspeicher gehalten werden. */
 export const COLLECTIONS = [
