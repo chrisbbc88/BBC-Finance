@@ -86,3 +86,47 @@ export async function exportPDF(table) {
     landscape: table.columns.length > 6,
   });
 }
+
+/**
+ * Tabelle aus einer Excel- oder CSV-Datei lesen (erstes Blatt). Gibt Zeilen als Objekte zurück,
+ * Schlüssel sind die Spaltenüberschriften der ersten Zeile.
+ */
+export async function readTableFile(file) {
+  if (file.size > 5 * 1024 * 1024) throw new Error(`„${file.name}“ ist größer als 5 MB.`);
+  if (!/\.(xlsx|xls|csv)$/i.test(file.name || '')) throw new Error('Bitte eine Excel-Datei (.xlsx) oder CSV-Datei wählen.');
+  const XLSX = await loadXLSX();
+  const isCsv = /\.csv$/i.test(file.name);
+  let wb;
+  if (isCsv) {
+    // CSV als Text lesen, damit Umlaute (UTF-8) und Semikolon als Trenner sicher erkannt werden.
+    const textContent = (await file.text()).replace(/^﻿/, '');
+    const firstLine = textContent.split(/\r?\n/)[0] || '';
+    const FS = (firstLine.match(/;/g) || []).length >= (firstLine.match(/,/g) || []).length ? ';' : ',';
+    wb = XLSX.read(textContent, { type: 'string', FS, raw: true });
+  } else {
+    wb = XLSX.read(new Uint8Array(await file.arrayBuffer()), { type: 'array' });
+  }
+  const ws = wb.Sheets[wb.SheetNames[0]];
+  if (!ws) throw new Error('Die Datei enthält keine Tabelle.');
+  return XLSX.utils.sheet_to_json(ws, { defval: '', raw: !isCsv });
+}
+
+/** Mehrere Datensätze (Objekte) als Excel-Datei speichern. */
+export async function exportRowsXLSX(rows, { fileName, sheet = 'Tabelle', moneyColumns = [] } = {}) {
+  const XLSX = await loadXLSX();
+  const ws = XLSX.utils.json_to_sheet(rows);
+  const header = rows.length ? Object.keys(rows[0]) : [];
+  header.forEach((h, ci) => {
+    for (let ri = 1; ri <= rows.length; ri++) {
+      const cell = ws[XLSX.utils.encode_cell({ r: ri, c: ci })];
+      if (!cell) continue;
+      if (typeof cell.v === 'number' && moneyColumns.includes(h)) cell.z = '#,##0.00';
+      if (typeof cell.v === 'string' && /^[=+\-@]/.test(cell.v)) cell.t = 's';
+    }
+  });
+  ws['!cols'] = header.map((h) => ({ wch: Math.min(60, Math.max(h.length, ...rows.map((r) => String(r[h] == null ? '' : r[h]).length)) + 2) }));
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, sheet.slice(0, 31));
+  const out = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+  saveBlob(new Blob([out], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), `${safeFileName(fileName)}.xlsx`);
+}

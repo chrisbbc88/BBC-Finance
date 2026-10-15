@@ -922,3 +922,10 @@ a.cell-main:hover { text-decoration: underline; }
 .voice-btn.is-open { background: var(--ink); color: var(--surface); border-color: var(--ink); }
 @media (max-width: 560px) { .voice-panel { right: 8px; left: 8px; bottom: 8px; width: auto; max-height: calc(100vh - 80px); } }
 .voice-panel .mic-btn { width: 52px; height: 52px; flex-shrink: 0; }
+
+/* Leistungskatalog */
+.mono-code { font-variant-numeric: tabular-nums; font-size: 12.5px; letter-spacing: .01em; color: var(--ink-2); white-space: nowrap; }
+.import-preview { max-height: 48vh; overflow: auto; margin-top: 12px; }
+.import-preview tr.is-bad td { background: var(--warn-bg); }
+.import-update { align-self: end; }
+.tone-good { color: var(--good); }

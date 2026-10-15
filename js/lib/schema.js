@@ -9,9 +9,9 @@ import { uid, nowISO, todayISO } from './util.js';
 export const SCHEMA_VERSION = 4;
 export const DB_NAME = 'bbc-finance';
 /** Stand der Anwendung – nach einem Update meldet das Tool einmal, dass alle Daten übernommen wurden. */
-export const APP_VERSION = '2026-10-15';
+export const APP_VERSION = '2026-10-15.2';
 /** Kurzer Hinweis auf die Neuerungen dieser Fassung (erscheint einmal nach dem Update). */
-export const APP_NEWS = 'Neu: Verträge und PDF-Angebote hochladen, Ablauf Termin → Angebot → Vertrag → Rechnung je Kontakt, dazu Sprachsteuerung („Sprechen“ oben rechts) und ein Mikrofon zum Diktieren in jedem größeren Textfeld.';
+export const APP_NEWS = 'Neu: Leistungen mit Nummer und Tarif (Starter/Standard), Import und Export als Excel; Sprachbefehl als kleines Fenster unten rechts.';
 
 /** Sammlungen, die vollständig im Arbeitsspeicher gehalten werden. */
 export const COLLECTIONS = [
@@ -66,6 +66,12 @@ export const DEFAULT_PAYMENT_METHODS = [
 ];
 
 export const UNITS = ['Stück', 'Stunde', 'Tag', 'Monat', 'Jahr', 'Pauschal', 'Paket'];
+
+/** Tarife einer Leistung. Leer = ohne Tarif. */
+export const SERVICE_TIERS = {
+  starter: { label: 'Starter', tone: 'good' },
+  standard: { label: 'Standard', tone: 'info' },
+};
 
 export const INTERVALS = [
   { id: 'monthly', label: 'Monatlich', months: 1 },
@@ -312,6 +318,7 @@ export function newCustomer(over = {}) {
 export function newService(over = {}) {
   return {
     ...stamp(),
+    code: '', tier: '',
     name: '', internalName: '', description: '', invoiceText: '',
     category: '', unit: 'Stück', priceCents: 0, currency: BASE_CURRENCY,
     taxRate: null, defaultQty: 1, recurring: false, companyId: '',

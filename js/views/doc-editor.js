@@ -13,7 +13,7 @@ import { DocSheet } from '../ui/docview.js';
 import { state, byId, activeCompanies, currentCompany, paymentsOf } from '../lib/store.js';
 import { removeInvoice } from './invoice-actions.js';
 import {
-  newInvoice, newQuote, newItem, customerName, LANGUAGES, DOC_CURRENCIES, UNITS, newCustomer, newService, isCustomer,
+  newInvoice, newQuote, newItem, customerName, LANGUAGES, DOC_CURRENCIES, UNITS, newCustomer, newService, isCustomer, SERVICE_TIERS,
 } from '../lib/schema.js';
 import {
   saveInvoiceDraft, finalizeInvoice, deleteInvoiceDraft, saveQuoteDraft, finalizeQuote, deleteQuote,
@@ -113,8 +113,9 @@ function ItemsEditor({ doc, company, onChange, onNewService }) {
     .filter((s) => s.active !== false && (!s.companyId || s.companyId === doc.companyId))
     .sort((a, b) => a.name.localeCompare(b.name, 'de'))
     .map((s) => ({
-      id: s.id, label: s.name, search: `${s.internalName} ${s.category}`,
-      sub: `${money(s.priceCents, s.currency)} je ${s.unit}`,
+      id: s.id, label: s.name,
+      search: `${s.code || ''} ${s.internalName} ${s.category} ${s.tier ? SERVICE_TIERS[s.tier].label : ''}`,
+      sub: [s.tier ? SERVICE_TIERS[s.tier].label : '', s.code, `${money(s.priceCents, s.currency)} je ${s.unit}`].filter(Boolean).join(' · '),
     })), [state.version, doc.companyId]);
 
   const update = (id, patch) => onChange(items.map((it) => (it.id === id ? { ...it, ...patch } : it)));

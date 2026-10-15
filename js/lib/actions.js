@@ -4,7 +4,7 @@
 import { write, state, byId, all, paymentsOf } from './store.js';
 import {
   newInvoice, newItem, customerName, INTERVALS, DOC_CURRENCIES, isCustomer, newTodo,
-  quoteLabel, CONTRACT_STATUS, CONTRACT_BILLING,
+  quoteLabel, CONTRACT_STATUS, CONTRACT_BILLING, newService,
 } from './schema.js';
 import {
   computeTotals, sumPayments, openCents, invoiceStatus, fxForDoc,
@@ -362,7 +362,9 @@ export async function deleteAppointment(id) {
 export async function saveService(service) {
   if (!String(service.name || '').trim()) fail('Bitte einen Namen für die Leistung eintragen.');
   const before = byId('services', service.id);
-  const rec = touch(service);
+  const rec = touch({ ...service, code: String(service.code || '').trim() });
+  const dup = rec.code && all('services').find((x) => x.id !== rec.id && (x.code || '').toLowerCase() === rec.code.toLowerCase());
+  if (dup) fail(`Die Leistungsnummer ${rec.code} ist bereits vergeben (${dup.name}).`);
   const d = diffFields(before, rec, ['updatedAt', 'createdAt']);
   await write(async (w) => {
     await w.put('services', rec);
@@ -372,6 +374,49 @@ export async function saveService(service) {
     });
   });
   return rec;
+}
+
+/**
+ * Leistungskatalog übernehmen. Neue Leistungen werden angelegt; Leistungen mit gleicher Nummer werden nur
+ * mit `update: true` überschrieben (id, Anlagedatum und Aktiv-Status bleiben). Gelöscht wird nie etwas.
+ * Fehlende Kategorien werden der Kategorienliste angehängt.
+ */
+export async function importServices(list, { companyId = '', update = false } = {}) {
+  if (companyId && !byId('companies', companyId)) fail('Das gewählte Unternehmen existiert nicht.');
+  const byCode = new Map(all('services').filter((x) => x.code).map((x) => [x.code.toLowerCase(), x]));
+  const added = [];
+  const updated = [];
+  const skipped = [];
+  for (const raw of list) {
+    const { company, ...fields } = raw;
+    const name = String(fields.name || '').trim();
+    if (!name) continue;
+    const code = String(fields.code || '').trim();
+    const existing = code ? byCode.get(code.toLowerCase()) : null;
+    if (existing && !update) { skipped.push(existing); continue; }
+    const base = existing || newService();
+    const rec = touch({
+      ...base, ...fields, name, code,
+      companyId: companyId || fields.companyId || base.companyId || '',
+      id: base.id, createdAt: base.createdAt,
+    });
+    if (existing) updated.push({ before: existing, rec }); else added.push(rec);
+    if (code) byCode.set(code.toLowerCase(), rec);
+  }
+  const cats = state.settings.serviceCategories || [];
+  const newCats = [...new Set([...added, ...updated.map((u) => u.rec)].map((x) => x.category).filter((c) => c && !cats.includes(c)))];
+  await write(async (w) => {
+    for (const rec of added) await w.put('services', rec);
+    for (const { rec } of updated) await w.put('services', rec);
+    if (newCats.length) await w.setting('serviceCategories', [...cats, ...newCats]);
+    await w.audit({
+      action: 'Leistungen importiert', entity: 'services', entityId: '',
+      label: `${added.length} neu, ${updated.length} aktualisiert, ${skipped.length} übersprungen`,
+      prev: updated.length ? { aktualisiert: updated.map((u) => ({ code: u.before.code, name: u.before.name, priceCents: u.before.priceCents })) } : null,
+      next: { neu: added.map((x) => x.code || x.name), ...(newCats.length ? { kategorien: newCats } : {}) },
+    });
+  });
+  return { added: added.length, updated: updated.length, skipped: skipped.length, categories: newCats };
 }
 
 export async function deleteService(id) {

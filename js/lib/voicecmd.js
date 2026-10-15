@@ -33,7 +33,7 @@ export function buildContext(data, { today, timeZone, now = new Date() }) {
   const services = data.services.filter((s) => s.active !== false).slice(0, 200);
   if (services.length) {
     lines.push('', 'LEISTUNGEN (für Rechnungsentwürfe):');
-    services.forEach((s, i) => lines.push(`${add('L', i, s.id)}: ${s.name} – ${((s.priceCents || 0) / 100).toFixed(2)} ${s.currency || ''} je ${s.unit || 'Stück'}`));
+    services.forEach((s, i) => lines.push(`${add('L', i, s.id)}: ${s.name}${s.tier ? ` (Tarif ${s.tier === 'starter' ? 'Starter' : 'Standard'})` : ''}${s.code ? ` [${s.code}]` : ''} – ${((s.priceCents || 0) / 100).toFixed(2)} ${s.currency || ''} je ${s.unit || 'Stück'}`));
   }
   const from = new Date(now.getTime() - 14 * 86400000).toISOString().slice(0, 10);
   const until = new Date(now.getTime() + 30 * 86400000).toISOString().slice(0, 10);
