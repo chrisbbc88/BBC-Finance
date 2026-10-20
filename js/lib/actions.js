@@ -4,8 +4,9 @@
 import { write, state, byId, all, paymentsOf } from './store.js';
 import {
   newInvoice, newItem, customerName, INTERVALS, DOC_CURRENCIES, isCustomer, newTodo,
-  quoteLabel, CONTRACT_STATUS, CONTRACT_BILLING, newService,
+  quoteLabel, CONTRACT_STATUS, newService,
 } from './schema.js';
+import { validateContractItems } from './contractitems.js';
 import {
   computeTotals, sumPayments, openCents, invoiceStatus, fxForDoc,
 } from './calc.js';
@@ -1318,21 +1319,31 @@ export async function saveContract(contract, { files = [], removeIds = [] } = {}
   if (!byId('customers', contract.customerId)) fail('Bitte den Kontakt wählen.');
   if (!String(contract.title || '').trim()) fail('Bitte eine Bezeichnung eintragen, z. B. „SEO-Betreuung“.');
   if (!CONTRACT_STATUS[contract.status]) fail('Unbekannter Status.');
-  if (!CONTRACT_BILLING.some((b) => b.id === contract.billing)) fail('Unbekannte Abrechnungsart.');
   for (const [k, label] of [['signedDate', 'Unterschrieben am'], ['startDate', 'Beginn'], ['endDate', 'Ende']]) {
     if (contract[k] && !plausibleDate(contract[k])) fail(`Bitte das Datum „${label}“ prüfen.`);
   }
   if (contract.startDate && contract.endDate && contract.endDate < contract.startDate) fail('Das Vertragsende liegt vor dem Beginn.');
-  if (contract.amountCents != null && !(Number(contract.amountCents) >= 0)) fail('Bitte den Betrag prüfen.');
   if (!DOC_CURRENCIES.includes(contract.currency)) fail('Bitte USD oder EUR wählen.');
   if (contract.quoteId && !byId('quotes', contract.quoteId)) fail('Das verknüpfte Angebot existiert nicht mehr.');
+  const items = (contract.items || []).map((it) => ({
+    ...it,
+    id: it.id && !String(it.id).startsWith('legacy-') ? it.id : uid(),
+    name: String(it.name || '').trim(),
+    qty: Number(it.qty) || 0,
+    priceCents: Math.round(Number(it.priceCents) || 0),
+    taxRate: Number(it.taxRate) || 0,
+  }));
+  const problem = validateContractItems(items);
+  if (problem) fail(problem);
   const rec = touch({
     ...contract,
     title: String(contract.title).trim(),
     refNumber: String(contract.refNumber || '').trim(),
-    amountCents: contract.amountCents == null || contract.amountCents === '' ? null : Math.round(Number(contract.amountCents)),
+    items,
     attachmentIds: (contract.attachmentIds || []).filter((aid) => !removeIds.includes(aid)),
   });
+  // Ältere Verträge mit nur einem Betrag: der Betrag steht jetzt als Position in `items`.
+  if (items.length && rec.amountCents != null) { rec.amountCents = null; rec.billing = 'none'; }
   const d = diffFields(before, rec, ['updatedAt', 'createdAt', 'attachmentIds']);
   return write(async (w) => {
     for (const aid of removeIds) await dropFile(w, aid);
@@ -1343,7 +1354,7 @@ export async function saveContract(contract, { files = [], removeIds = [] } = {}
       action: before ? 'Vertrag geändert' : 'Vertrag angelegt',
       entity: 'contracts', entityId: rec.id, label: rec.title,
       prev: before ? d.prev : null,
-      next: before ? { ...d.next, ...(fileNote ? { dateien: fileNote } : {}) } : { title: rec.title, status: rec.status, ...(fileNote ? { dateien: fileNote } : {}) },
+      next: before ? { ...d.next, ...(fileNote ? { dateien: fileNote } : {}) } : { title: rec.title, status: rec.status, positionen: items.length, ...(fileNote ? { dateien: fileNote } : {}) },
     });
     return rec;
   });
@@ -1362,19 +1373,6 @@ export async function deleteContract(id) {
     for (const r of all('recurring').filter((x) => x.contractId === id)) await w.put('recurring', touch({ ...r, contractId: '' }));
     await w.del('contracts', id);
     await w.audit({ action: 'Vertrag gelöscht', entity: 'contracts', entityId: id, label: c.title, prev: c });
-  });
-}
-
-/** Rechnungsposition aus einem Vertrag (für Rechnungsentwurf und wiederkehrende Vorlage). */
-export function contractItem(contract) {
-  const billing = CONTRACT_BILLING.find((b) => b.id === contract.billing);
-  return newItem({
-    name: contract.title,
-    description: contract.refNumber ? `Gemäß Vertrag ${contract.refNumber}` : '',
-    qty: 1,
-    unit: billing && ['monthly', 'quarterly', 'semiannual', 'yearly'].includes(billing.id) ? { monthly: 'Monat', quarterly: 'Quartal', semiannual: 'Halbjahr', yearly: 'Jahr' }[billing.id] : 'Pauschale',
-    priceCents: contract.amountCents || 0,
-    taxRate: Number(contract.taxRate) || 0,
   });
 }
 
@@ -1511,7 +1509,7 @@ export async function runRecurring(id, { early = false } = {}) {
     intro: rec.intro,
     paymentTermDays: rec.paymentTermDays,
     recurringId: rec.id,
-    ...(rec.contractId ? { contractId: rec.contractId } : {}),
+    ...(rec.contractId ? { contractId: rec.contractId, contractPart: rec.contractInterval || rec.interval } : {}),
   });
   const next = addMonths(issueDate, months, rec.anchorDay);
   const ends = !!rec.endDate && next > rec.endDate;

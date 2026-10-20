@@ -9,9 +9,9 @@ import { uid, nowISO, todayISO } from './util.js';
 export const SCHEMA_VERSION = 4;
 export const DB_NAME = 'bbc-finance';
 /** Stand der Anwendung – nach einem Update meldet das Tool einmal, dass alle Daten übernommen wurden. */
-export const APP_VERSION = '2026-10-15.3';
+export const APP_VERSION = '2026-10-20';
 /** Kurzer Hinweis auf die Neuerungen dieser Fassung (erscheint einmal nach dem Update). */
-export const APP_NEWS = 'Neu: fester Backup-Ordner (Einstellungen → Backup-Ordner), To-dos farbig nach Fälligkeit, Leistungen mit Nummer und Tarif samt Excel-Import.';
+export const APP_NEWS = 'Neu: Verträge mit mehreren Positionen – einmalig oder laufend (monatlich, quartalsweise, jährlich). Daraus die einmalige Rechnung und die wiederkehrende Rechnung getrennt anlegen.';
 
 /** Sammlungen, die vollständig im Arbeitsspeicher gehalten werden. */
 export const COLLECTIONS = [
@@ -432,10 +432,8 @@ export function newContract(company, over = {}) {
     refNumber: '',
     status: 'open',
     signedDate: '', startDate: '', endDate: '', noticePeriod: '',
-    billing: 'none',
-    amountCents: null,
+    items: [],   // Positionen: einmalig oder wiederkehrend, siehe contractitems.js
     currency: company ? company.currency : BASE_CURRENCY,
-    taxRate: company ? Number(company.defaultTaxRate) || 0 : 0,
     quoteId: '',
     attachmentIds: [],
     notes: '',

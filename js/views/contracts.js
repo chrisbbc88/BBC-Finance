@@ -3,15 +3,19 @@
 import { html, useState, useRef, useMemo, useStore, navigate, toast, attempt, ask } from '../ui/core.js';
 import {
   Button, PageHeader, DataTable, SearchInput, Chips, EmptyState, Modal, TextField, TextArea, SelectField,
-  NumberField, DateField, Field, Combobox, Badge, Notice, Panel,
+  NumberField, NumberInput, DateField, Field, Combobox, Badge, Notice, Panel,
 } from '../ui/components.js';
 import { Icon } from '../ui/icons.js';
 import { state, byId, activeCompanies, currentCompany, inScope } from '../lib/store.js';
 import {
-  newContract, newUploadedQuote, newItem, newRecurring, customerName, CONTRACT_STATUS, CONTRACT_BILLING,
-  DOC_CURRENCIES, QUOTE_STATUS, quoteLabel,
+  newContract, newUploadedQuote, newItem, newRecurring, customerName, CONTRACT_STATUS,
+  DOC_CURRENCIES, QUOTE_STATUS, quoteLabel, SERVICE_TIERS,
 } from '../lib/schema.js';
-import { saveContract, deleteContract, saveUploadedQuote, contractItem } from '../lib/actions.js';
+import { saveContract, deleteContract, saveUploadedQuote } from '../lib/actions.js';
+import {
+  BILLING_OPTIONS, PER, isInterval, newContractItem, contractItems, contractSums, contractSummaryText,
+  billingOfService, itemsFromQuote, lineNet, invoiceItemsFromContract,
+} from '../lib/contractitems.js';
 import { preparePdf, attachmentBlob } from '../lib/files.js';
 import { fxFor } from '../lib/fx.js';
 import { computeTotals, quoteStatus } from '../lib/calc.js';
@@ -30,20 +34,25 @@ const CONTRACT_VIEW = {
   ending: { label: 'Endet bald', tone: 'warn' },
   expired: { label: 'Ende überschritten', tone: 'bad' },
 };
-const PER = { monthly: 'Monat', quarterly: 'Quartal', semiannual: 'Halbjahr', yearly: 'Jahr' };
-export const isRecurringBilling = (b) => !!PER[b];
+const INTERVAL_VERB = { monthly: 'Monatlich', quarterly: 'Quartalsweise', semiannual: 'Halbjährlich', yearly: 'Jährlich' };
 
 export function ContractBadge({ contract }) {
   const def = CONTRACT_VIEW[contractStatus(contract, todayISO())] || CONTRACT_STATUS.open;
   return html`<${Badge} tone=${def.tone}>${def.label}<//>`;
 }
 
+/** Kurzfassung der Positionen, z. B. „2.490,00 € einmalig · 149,00 € / Monat“ (netto). */
 export function contractAmount(c) {
-  if (c.amountCents == null) return '';
-  const base = `${money(c.amountCents, c.currency)} netto`;
-  if (PER[c.billing]) return `${base} / ${PER[c.billing]}`;
-  if (c.billing === 'once') return `${base}, einmalig`;
-  return base;
+  return contractSummaryText(c, (cents) => money(cents, c.currency));
+}
+
+/** Was aus dem Vertrag schon abgerechnet ist: einmalige Rechnungen und Vorlagen je Intervall. */
+export function contractBilling(c) {
+  const invoices = state.invoices.filter((i) => i.contractId === c.id && i.type !== 'credit_note');
+  const onceInvoices = invoices.filter((i) => i.contractPart === 'once' || i.contractPart === 'all' || (!i.contractPart && !i.recurringId));
+  const templates = state.recurring.filter((r) => r.contractId === c.id);
+  const templateFor = (b) => templates.filter((r) => (r.contractInterval || r.interval) === b);
+  return { invoices, onceInvoices, templates, templateFor };
 }
 
 export function contractTerm(c) {
@@ -88,16 +97,15 @@ export function uploadQuoteFor(customerId = '') {
   });
 }
 
-/** Neuer Vertrag – aus einem Angebot übernimmt er Bezeichnung, Betrag, Währung und Steuersatz. */
+/** Neuer Vertrag – aus einem Angebot übernimmt er Bezeichnung, Währung und die Positionen (einmalig oder laufend). */
 export function contractFromQuote(quote) {
   const company = byId('companies', quote.companyId);
   const item = (quote.items || []).find((it) => !it.isText);
   return newContract(company, {
     customerId: quote.customerId,
     title: quote.title || (item ? item.name : ''),
-    amountCents: quote.totals ? quote.totals.netCents : null,
+    items: itemsFromQuote(quote, (id) => byId('services', id)),
     currency: quote.currency,
-    taxRate: item ? Number(item.taxRate) || 0 : (company ? Number(company.defaultTaxRate) || 0 : 0),
     quoteId: quote.id,
   });
 }
@@ -111,6 +119,26 @@ export function contractFor(customerId) {
     .sort((a, b) => ((a.issueDate || '') < (b.issueDate || '') ? 1 : -1))[0];
   if (accepted) return contractFromQuote(accepted);
   return newContract(companyFor(customerId), { customerId });
+}
+
+/** Vorbelegte wiederkehrende Vorlage für die laufenden Positionen eines Intervalls. */
+export function recurringFromContract(contract, interval) {
+  const company = byId('companies', contract.companyId);
+  const customer = byId('customers', contract.customerId);
+  const start = contract.startDate && contract.startDate > todayISO() ? contract.startDate : todayISO();
+  const several = contractSums(contract).intervalIds.length > 1;
+  return newRecurring(company, {
+    name: `${contract.title} – ${customerName(customer)}${several ? ` (${INTERVAL_VERB[interval].toLowerCase()})` : ''}`,
+    customerId: contract.customerId,
+    interval,
+    startDate: start, nextDate: start, endDate: contract.endDate || '',
+    currency: contract.currency,
+    ...(customer && customer.language ? { language: customer.language } : {}),
+    ...(customer && customer.paymentTermDays != null && customer.paymentTermDays !== '' ? { paymentTermDays: Number(customer.paymentTermDays) } : {}),
+    items: invoiceItemsFromContract(contract, interval),
+    contractId: contract.id,
+    contractInterval: interval,
+  });
 }
 
 /* ---------- PDF auswählen (Klick oder Ziehen) ---------- */
@@ -251,10 +279,103 @@ export function QuoteUploadModal({ quote, onClose, onSaved }) {
 
 /* ---------- Vertrag ---------- */
 
+/** Positionen eines Vertrags: Leistung aus dem Katalog oder frei, je Position einmalig oder wiederkehrend. */
+function ContractItemsEditor({ items, onChange, companyId, currency }) {
+  const company = byId('companies', companyId);
+  const services = state.services
+    .filter((s) => s.active !== false && (!s.companyId || s.companyId === companyId))
+    .sort((a, b) => a.name.localeCompare(b.name, 'de'))
+    .map((s) => ({
+      id: s.id, label: s.name,
+      search: `${s.code || ''} ${s.internalName || ''} ${s.category || ''} ${s.tier ? SERVICE_TIERS[s.tier].label : ''}`,
+      sub: [s.tier ? SERVICE_TIERS[s.tier].label : '', s.code, `${money(s.priceCents, s.currency)} je ${s.unit}`, s.recurring ? 'laufend' : 'einmalig'].filter(Boolean).join(' · '),
+    }));
+  const update = (id, patch) => onChange(items.map((it) => (it.id === id ? { ...it, ...patch } : it)));
+  const remove = (id) => onChange(items.filter((it) => it.id !== id));
+  const add = (billing = 'once') => onChange([...items, newContractItem({
+    billing, unit: PER[billing] || 'Pauschal', taxRate: company ? Number(company.defaultTaxRate) || 0 : 0,
+  })]);
+  function applyService(itemId, sid) {
+    const s = byId('services', sid);
+    if (!s) return;
+    if (s.currency && s.currency !== currency) toast(`„${s.name}“ ist in ${s.currency} hinterlegt, der Vertrag in ${currency}. Bitte den Preis prüfen.`, 'info', 7000);
+    update(itemId, {
+      serviceId: s.id, name: s.name, description: s.invoiceText || '',
+      qty: Number(s.defaultQty) || 1, unit: s.unit || 'Pauschal', priceCents: s.priceCents || 0,
+      taxRate: s.taxRate != null && s.taxRate !== '' ? Number(s.taxRate) : (company ? Number(company.defaultTaxRate) || 0 : 0),
+      billing: billingOfService(s),
+    });
+  }
+  const sums = contractSums({ items });
+  return html`<div class="items ct-items">
+    ${items.map((it, i) => html`<div class=${`item ct-item${isInterval(it.billing) ? ' is-recurring' : ''}`} key=${it.id}>
+      <div class="item-top">
+        <span class="item-pos">${i + 1}</span>
+        <div class="item-name">
+          <${Combobox} freeText options=${services} text=${it.name} label=${`Vertragsposition ${i + 1}: Leistung`}
+            placeholder="Leistung wählen oder Bezeichnung eintippen"
+            onText=${(t) => update(it.id, { name: t, serviceId: it.serviceId && byId('services', it.serviceId) && byId('services', it.serviceId).name === t ? it.serviceId : '' })}
+            onChange=${(sid) => applyService(it.id, sid)} />
+        </div>
+        <div class="item-actions">
+          <button type="button" class="mini-btn is-danger" title="Position entfernen" aria-label=${`Vertragsposition ${i + 1} entfernen`} onClick=${() => remove(it.id)}><${Icon} name="trash" size=${15} /></button>
+        </div>
+      </div>
+      <div class="item-fields">
+        <label class="item-field ct-billing"><span>Abrechnung</span>
+          <select class="input select" value=${it.billing} aria-label=${`Vertragsposition ${i + 1}: Abrechnung`}
+            onChange=${(e) => { const b = e.target.value; update(it.id, { billing: b, ...(PER[b] && (!it.unit || it.unit === 'Pauschal' || Object.values(PER).includes(it.unit)) ? { unit: PER[b] } : (!PER[b] && Object.values(PER).includes(it.unit) ? { unit: 'Pauschal' } : {})) }); }}>
+            ${BILLING_OPTIONS.map((o) => html`<option value=${o.id} selected=${o.id === it.billing}>${o.label}</option>`)}
+          </select></label>
+        <label class="item-field"><span>Menge</span>
+          <${NumberInput} value=${it.qty} digits=${3} onChange=${(v) => update(it.id, { qty: v })} aria-label=${`Vertragsposition ${i + 1}: Menge`} /></label>
+        <label class="item-field"><span>Einzelpreis netto</span>
+          <${NumberInput} mode="money" value=${it.priceCents} onChange=${(v) => update(it.id, { priceCents: v })} aria-label=${`Vertragsposition ${i + 1}: Einzelpreis`} /></label>
+        <label class="item-field"><span>Steuer</span>
+          <${NumberInput} value=${it.taxRate} digits=${3} min=${0} max=${100} suffix="%" onChange=${(v) => update(it.id, { taxRate: v })} aria-label=${`Vertragsposition ${i + 1}: Steuersatz`} /></label>
+        <div class="item-field item-amount"><span>Betrag</span><strong>${money(lineNet(it), currency)}${PER[it.billing] ? html`<small>${' / '}${PER[it.billing]}</small>` : ''}</strong></div>
+      </div>
+    </div>`)}
+    ${!items.length && html`<p class="muted-text ct-empty">Noch keine Positionen. Lege z. B. die Website als einmalige Position und den Website-Service als monatliche Position an.</p>`}
+    <div class="items-foot">
+      <${Button} icon="plus" onClick=${() => add('once')}>Einmalige Position<//>
+      <${Button} icon="repeat" onClick=${() => add('monthly')}>Laufende Position<//>
+      ${items.length > 0 && html`<span class="ct-sums">${contractSummaryText({ items }, (x) => money(x, currency))} <span class="muted-text">netto</span></span>`}
+    </div>
+  </div>`;
+}
+
+/** Abrechnungsübersicht im Vertrag: einmalige Positionen als Rechnung, laufende je Intervall als Vorlage. */
+function ContractBillingBox({ c, sums, billing, busy, onOnce, onInterval, onClose }) {
+  if (!sums.hasOnce && !sums.intervalIds.length) return null;
+  return html`<div class="ct-billing-box">
+    ${sums.hasOnce && html`<div class="ct-bill-row">
+      <div><strong>Einmalig</strong> · ${money(sums.once, c.currency)} netto
+        ${billing.onceInvoices.length > 0 && html`<div class="cell-sub">Abgerechnet: ${billing.onceInvoices.map((i, k) => html`${k ? ', ' : ''}<a href=${`#/invoices/${i.id}${i.status === 'draft' ? '/edit' : ''}`} onClick=${onClose}>${i.number || 'Entwurf'}</a>`)}</div>`}
+      </div>
+      <${Button} small icon="invoice" busy=${busy === 'once'} onClick=${onOnce}>${billing.onceInvoices.length ? 'Weitere Rechnung' : 'Rechnung erstellen'}<//>
+    </div>`}
+    ${sums.intervalIds.map((b) => {
+      const tpl = billing.templateFor(b);
+      return html`<div class="ct-bill-row" key=${b}>
+        <div><strong>${INTERVAL_VERB[b]}</strong> · ${money(sums.intervals[b], c.currency)} netto / ${PER[b]}
+          ${tpl.length > 0 && html`<div class="cell-sub">Vorlage ${tpl.map((r, k) => html`${k ? ', ' : ''}<a href="#/recurring" onClick=${onClose}>„${r.name}“</a> ${r.active ? `– nächste Rechnung ${date(r.nextDate)}` : '– pausiert oder beendet'}`)}</div>`}
+        </div>
+        <${Button} small icon="repeat" busy=${busy === b} onClick=${() => onInterval(b)}>${tpl.length ? 'Weitere Vorlage' : 'Wiederkehrende Rechnung anlegen'}<//>
+      </div>`;
+    })}
+  </div>`;
+}
+
+
 export function ContractModal({ contract, onClose }) {
   useStore();
   const isNew = !byId('contracts', contract.id);
-  const [c, setC] = useState(() => clone(contract));
+  const [c, setC] = useState(() => {
+    const x = clone(contract);
+    x.items = contractItems(contract).map((it) => ({ ...it }));   // ältere Verträge: Betrag als Position
+    return x;
+  });
   const [files, setFiles] = useState([]);
   const [removeIds, setRemoveIds] = useState([]);
   const [preview, setPreview] = useState('');
@@ -272,7 +393,7 @@ export function ContractModal({ contract, onClose }) {
 
   function pickCompany(id) {
     const co = byId('companies', id);
-    setC((p) => ({ ...p, companyId: id, ...(co && isNew && p.amountCents == null ? { currency: co.currency, taxRate: Number(co.defaultTaxRate) || 0 } : {}) }));
+    setC((p) => ({ ...p, companyId: id, ...(co && isNew && !(p.items || []).length ? { currency: co.currency } : {}) }));
   }
   function pickQuote(id) {
     const q = byId('quotes', id);
@@ -281,7 +402,7 @@ export function ContractModal({ contract, onClose }) {
     setC((p) => ({
       ...p, quoteId: id, companyId: p.companyId || from.companyId,
       title: p.title || from.title,
-      ...(p.amountCents == null ? { amountCents: from.amountCents, currency: from.currency, taxRate: from.taxRate } : {}),
+      ...(!(p.items || []).length ? { items: from.items, currency: from.currency } : {}),
     }));
   }
 
@@ -298,32 +419,19 @@ export function ContractModal({ contract, onClose }) {
     if (saved) { toast(isNew ? `Vertrag „${saved.title}“ angelegt` : 'Vertrag gespeichert', 'good'); onClose(); }
   }
   async function toInvoice() {
-    setBusy('invoice');
+    setBusy('once');
     const saved = await save();
     setBusy('');
     if (!saved) return;
     onClose();
-    navigate(`/invoices/new?contract=${saved.id}`);
+    navigate(`/invoices/new?contract=${saved.id}&part=once`);
   }
-  async function toRecurring() {
-    setBusy('recurring');
+  async function toRecurring(interval) {
+    setBusy(interval);
     const saved = await save();
     setBusy('');
     if (!saved) return;
-    const company = byId('companies', saved.companyId);
-    const customer = byId('customers', saved.customerId);
-    const start = saved.startDate && saved.startDate > todayISO() ? saved.startDate : todayISO();
-    setRecurring(newRecurring(company, {
-      name: `${saved.title} – ${customerName(customer)}`,
-      customerId: saved.customerId,
-      interval: saved.billing,
-      startDate: start, nextDate: start, endDate: saved.endDate || '',
-      currency: saved.currency,
-      ...(customer && customer.language ? { language: customer.language } : {}),
-      ...(customer && customer.paymentTermDays != null && customer.paymentTermDays !== '' ? { paymentTermDays: Number(customer.paymentTermDays) } : {}),
-      items: [contractItem(saved)],
-      contractId: saved.id,
-    }));
+    setRecurring(recurringFromContract(saved, interval));
   }
   async function remove() {
     const linked = invoices.length + templates.length;
@@ -337,12 +445,11 @@ export function ContractModal({ contract, onClose }) {
     if (done) { toast('Vertrag gelöscht', 'good'); onClose(); }
   }
 
-  const canBill = c.amountCents != null && c.status !== 'declined';
-  return html`<${Modal} title=${isNew ? 'Neuer Vertrag' : 'Vertrag'} size="lg" onClose=${onClose} onSubmit=${submit}
+  const sums = contractSums(c);
+  const billingInfo = isNew ? { invoices: [], onceInvoices: [], templates: [], templateFor: () => [] } : contractBilling(c);
+  return html`<${Modal} title=${isNew ? 'Neuer Vertrag' : 'Vertrag'} size="xl" onClose=${onClose} onSubmit=${submit}
     footer=${html`
       ${!isNew && html`<${Button} variant="ghost" icon="trash" class="push-left" onClick=${remove}>Löschen<//>`}
-      ${canBill && html`<${Button} icon="invoice" busy=${busy === 'invoice'} onClick=${toInvoice}>Rechnung erstellen<//>`}
-      ${canBill && isRecurringBilling(c.billing) && html`<${Button} icon="repeat" busy=${busy === 'recurring'} onClick=${toRecurring}>Wiederkehrend abrechnen<//>`}
       <${Button} onClick=${onClose}>Abbrechen<//>
       <${Button} variant="primary" type="submit" busy=${busy === 'save'}>Speichern<//>`}>
     <div class="form-grid">
@@ -362,23 +469,22 @@ export function ContractModal({ contract, onClose }) {
       <${DateField} class="span-2" label="Beginn" value=${c.startDate} onInput=${set('startDate')} />
       <${DateField} class="span-2" label="Ende" hint="leer = unbefristet" value=${c.endDate} onInput=${set('endDate')} min=${c.startDate || undefined} />
       <${TextField} class="span-2" label="Kündigungsfrist" hint="optional" value=${c.noticePeriod} onInput=${set('noticePeriod')} placeholder="z. B. 3 Monate zum Laufzeitende" />
-      <${SelectField} class="span-2" label="Abrechnung" value=${c.billing} onChange=${set('billing')} options=${CONTRACT_BILLING} />
-      <${NumberField} class="span-2" label=${PER[c.billing] ? `Betrag netto je ${PER[c.billing]}` : 'Betrag netto'} mode="money" value=${c.amountCents} allowEmpty onChange=${set('amountCents')} />
-      <${NumberField} class="span-1" label="Steuer" value=${c.taxRate} digits=${2} min=${0} max=${100} suffix="%" onChange=${set('taxRate')} />
-      <${SelectField} class="span-1" label="Währung" value=${c.currency} onChange=${set('currency')} options=${DOC_CURRENCIES} />
+      <${SelectField} class="span-2" label="Währung" value=${c.currency} onChange=${set('currency')} options=${DOC_CURRENCIES} />
       <${TextArea} class="span-6" label="Notizen" value=${c.notes} onInput=${set('notes')} rows=${2} placeholder="z. B. Sonderkonditionen, Ansprechpartner, Verlängerung" />
     </div>
+    <h3 class="sub-head">Positionen</h3>
+    <${ContractItemsEditor} items=${c.items || []} onChange=${(items) => setC((p) => ({ ...p, items }))} companyId=${c.companyId} currency=${c.currency} />
+    ${c.status !== 'declined' && (sums.hasOnce || sums.intervalIds.length > 0) && html`<h3 class="sub-head">Abrechnen</h3>
+      <${ContractBillingBox} c=${c} sums=${sums} billing=${billingInfo} busy=${busy} onOnce=${toInvoice} onInterval=${toRecurring} onClose=${onClose} />`}
     <h3 class="sub-head">Vertragsdokumente</h3>
     <${FileList} ids=${kept} preview=${preview} setPreview=${setPreview} onRemove=${(aid) => setRemoveIds((p) => [...p, aid])} />
     <${PendingFiles} files=${files} onRemove=${(i) => setFiles((p) => p.filter((_, j) => j !== i))} />
     ${removeIds.length > 0 && html`<p class="muted-text small">${removeIds.length === 1 ? 'Ein PDF wird' : `${removeIds.length} PDFs werden`} beim Speichern entfernt.
       <button type="button" class="link-btn" onClick=${() => setRemoveIds([])}>Rückgängig</button></p>`}
     <${PdfDrop} multiple label="Vertrag als PDF hinzufügen" sub="Auch mehrere Dateien, z. B. Vertrag und Nachtrag" onFiles=${(f) => setFiles((p) => [...p, ...f])} />
-    ${(invoices.length > 0 || templates.length > 0) && html`<h3 class="sub-head">Abrechnung zu diesem Vertrag</h3>
+    ${invoices.length > 0 && html`<h3 class="sub-head">Rechnungen zu diesem Vertrag</h3>
       <ul class="plain-list linked-list">
-        ${templates.map((r) => html`<li key=${r.id}><${Icon} name="repeat" size=${14} /> <a href="#/recurring">Vorlage „${r.name}“</a>
-          <span class="muted-text">${r.active ? `nächste Rechnung ${date(r.nextDate)}` : 'pausiert oder beendet'}</span></li>`)}
-        ${invoices.map((i) => html`<li key=${i.id}><${Icon} name="invoice" size=${14} />
+        ${invoices.map((i) => html`<li key=${i.id}><${Icon} name=${i.contractPart && i.contractPart !== 'once' && i.contractPart !== 'all' ? 'repeat' : 'invoice'} size=${14} />
           <a href=${`#/invoices/${i.id}${i.status === 'draft' ? '/edit' : ''}`} onClick=${onClose}>${i.number || 'Entwurf'}</a>
           <span class="muted-text">${date(i.issueDate)}</span> <${DocAmount} doc=${i} /> <${InvoiceBadge} inv=${i} /></li>`)}
       </ul>`}
@@ -416,7 +522,7 @@ export function ContractsView({ params = {} }) {
     { key: 'customer', label: 'Kontakt', sort: (r) => customerName(byId('customers', r.c.customerId)), render: (r) => customerName(byId('customers', r.c.customerId)) || '–' },
     ...(showCompany ? [{ key: 'company', label: 'Unternehmen', render: (r) => html`<${CompanyTag} id=${r.c.companyId} />` }] : []),
     { key: 'term', label: 'Laufzeit', sort: (r) => r.c.endDate || r.c.startDate || '', render: (r) => contractTerm(r.c) || html`<span class="muted-text">–</span>` },
-    { key: 'amount', label: 'Betrag', align: 'right', sort: (r) => r.c.amountCents || 0, render: (r) => contractAmount(r.c) || html`<span class="muted-text">–</span>` },
+    { key: 'amount', label: 'Betrag netto', align: 'right', sort: (r) => { const x = contractSums(r.c); return x.once + Object.values(x.intervals).reduce((a, v) => a + v, 0); }, render: (r) => contractAmount(r.c) || html`<span class="muted-text">–</span>` },
     { key: 'files', label: 'PDF', align: 'right', render: (r) => ((r.c.attachmentIds || []).length ? html`<span class="file-count" title="Vertragsdokumente"><${Icon} name="file" size=${14} />${r.c.attachmentIds.length}</span>` : '') },
     { key: 'status', label: 'Status', sort: (r) => r.s, render: (r) => html`<${ContractBadge} contract=${r.c} />` },
   ];
@@ -456,8 +562,11 @@ export function PipelinePanel({ customerId, on }) {
     appointments: state.appointments, quotes: state.quotes, contracts: state.contracts, invoices: state.invoices,
   }, customerId, today);
   const [meeting, quote, contract, invoice] = steps;
-  const billable = state.contracts.find((c) => c.customerId === customerId && c.status === 'signed' && c.amountCents != null
-    && !state.invoices.some((i) => i.contractId === c.id) && !state.recurring.some((r) => r.contractId === c.id));
+  // Unterschriebener Vertrag, dessen einmalige Positionen noch nicht abgerechnet sind bzw. dessen laufende
+  // Positionen noch keine Vorlage haben.
+  const signed = state.contracts.filter((c) => c.customerId === customerId && c.status === 'signed');
+  const onceOpen = signed.find((c) => contractSums(c).hasOnce && !contractBilling(c).onceInvoices.length);
+  const recurringOpen = signed.find((c) => contractSums(c).intervalIds.some((b) => !contractBilling(c).templateFor(b).length));
 
   const body = {
     meeting: html`
@@ -486,7 +595,8 @@ export function PipelinePanel({ customerId, on }) {
           <p class="muted-text">${date(invoice.latest.issueDate)}${invoice.count > 1 ? ` · ${invoice.count} Rechnungen` : ''}</p>`
         : html`<p class="muted-text">${invoice.drafts ? `${invoice.drafts} ${invoice.drafts === 1 ? 'Entwurf' : 'Entwürfe'} in Arbeit.` : 'Noch keine Rechnung.'}</p>`}
       <div class="flow-actions">
-        ${billable && html`<${Button} small variant="primary" icon="invoice" onClick=${() => navigate(`/invoices/new?contract=${billable.id}`)}>Aus Vertrag<//>`}
+        ${onceOpen && html`<${Button} small variant="primary" icon="invoice" onClick=${() => navigate(`/invoices/new?contract=${onceOpen.id}&part=once`)}>Aus Vertrag<//>`}
+        ${recurringOpen && html`<${Button} small icon="repeat" onClick=${() => on.openContract(recurringOpen)}>Laufend abrechnen<//>`}
         <${Button} small icon="plus" onClick=${() => navigate(`/invoices/new?customer=${customerId}`)}>Schreiben<//>
       </div>`,
   };
@@ -513,7 +623,7 @@ export function ContractTable({ customerId, onOpen }) {
     { key: 'title', label: 'Vertrag', render: (c) => html`<span class="cell-main">${c.title}</span>${c.refNumber && html`<div class="cell-sub">${c.refNumber}</div>`}` },
     { key: 'company', label: 'Unternehmen', render: (c) => html`<${CompanyTag} id=${c.companyId} />` },
     { key: 'term', label: 'Laufzeit', render: (c) => contractTerm(c) || '–' },
-    { key: 'amount', label: 'Betrag', align: 'right', render: (c) => contractAmount(c) || '–' },
+    { key: 'amount', label: 'Betrag netto', align: 'right', render: (c) => contractAmount(c) || '–' },
     { key: 'files', label: 'PDF', align: 'right', render: (c) => ((c.attachmentIds || []).length ? html`<span class="file-count"><${Icon} name="file" size=${14} />${c.attachmentIds.length}</span>` : '') },
     { key: 'status', label: 'Status', render: (c) => html`<${ContractBadge} contract=${c} />` },
   ];

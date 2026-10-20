@@ -942,3 +942,15 @@ a.cell-main:hover { text-decoration: underline; }
 .backup-folder-label { font-size: 13px; color: var(--muted); }
 .backup-folder .field-hint { margin: 8px 0 0; }
 .backup-folder-name { display: inline-flex; align-items: center; gap: 6px; }
+
+/* Vertragspositionen und Abrechnung */
+.ct-items .item-fields { grid-template-columns: 150px 90px 140px 100px 1fr; }
+.ct-item.is-recurring .item-pos { background: var(--info-bg); color: var(--info); }
+.ct-item .item-amount small { font-weight: 500; color: var(--muted); }
+.ct-empty { margin: 4px 0 8px; }
+.ct-sums { margin-left: auto; font-weight: 600; }
+.ct-billing-box { border: 1px solid var(--line); border-radius: var(--r-m); overflow: hidden; margin-bottom: 8px; }
+.ct-bill-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 14px; }
+.ct-bill-row + .ct-bill-row { border-top: 1px solid var(--line); }
+@media (max-width: 720px) { .ct-items .item-fields { grid-template-columns: 1fr 1fr; } .ct-bill-row { flex-direction: column; align-items: flex-start; } .ct-sums { margin-left: 0; width: 100%; } }
+.ct-item.is-recurring .item-pos { border-radius: 4px; text-align: center; }

@@ -17,7 +17,7 @@ import {
 } from '../lib/schema.js';
 import {
   saveInvoiceDraft, finalizeInvoice, deleteInvoiceDraft, saveQuoteDraft, finalizeQuote, deleteQuote,
-  itemFromService, dueDateOf, validateDoc, peekNumber, duplicateAsDraft, nextContactNumber, contractItem,
+  itemFromService, dueDateOf, validateDoc, peekNumber, duplicateAsDraft, nextContactNumber,
 } from '../lib/actions.js';
 import { computeTotals, convertCents, fxForDoc, lineTotalCents, sumPayments } from '../lib/calc.js';
 import { fxFor, lastKnownRate, wantedRateDate } from '../lib/fx.js';
@@ -25,6 +25,7 @@ import { buildDocModel } from '../lib/docmodel.js';
 import { money, date, dateTime, rate, pct } from '../lib/format.js';
 import { clone, todayISO, nowISO, addDays, isISODate } from '../lib/util.js';
 import { CustomerFormModal } from './customers.js';
+import { invoiceItemsFromContract } from '../lib/contractitems.js';
 import { ServiceFormModal } from './services.js';
 
 const KIND = {
@@ -68,10 +69,12 @@ function initialDoc(coll, id, params) {
     const ct = byId('contracts', params.contract);
     const co = byId('companies', ct.companyId) || company;
     const q = ct.quoteId ? byId('quotes', ct.quoteId) : null;
-    doc = customerDefaults(newInvoice(co, { contractId: ct.id }), byId('customers', ct.customerId), co, coll);
+    const part = ['once', 'all', 'monthly', 'quarterly', 'semiannual', 'yearly'].includes(params.part) ? params.part : 'once';
+    doc = customerDefaults(newInvoice(co, { contractId: ct.id, contractPart: part }), byId('customers', ct.customerId), co, coll);
     doc.currency = ct.currency;
-    doc.items = [contractItem(ct)];
-    if (q && !q.invoiceId && q.status !== 'draft') doc.quoteId = q.id;
+    doc.items = invoiceItemsFromContract(ct, part);
+    if (!doc.items.length) doc.items = invoiceItemsFromContract(ct, 'all');
+    if (q && !q.invoiceId && q.status !== 'draft' && part === 'once') doc.quoteId = q.id;
     return doc;
   } else if (coll === 'invoices') {
     doc = newInvoice(company);

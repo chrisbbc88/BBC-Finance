@@ -14,6 +14,7 @@ import { fxForDoc, computeTotals } from './calc.js';
 import { todayISO, addMonths, addDays, nowISO } from './util.js';
 import { transact, ALL_STORES } from './db.js';
 import { reload, broadcastChange } from './store.js';
+import { itemsFromQuote, newContractItem } from './contractitems.js';
 
 const CUSTOMERS = [
   { company: 'Nordlicht Immobilien GmbH', firstName: 'Jana', lastName: 'Petersen', street: 'Hafenallee', houseNo: '12', zip: '20457', city: 'Hamburg', country: 'Deutschland', email: 'j.petersen@nordlicht-immobilien.example', language: 'de', currency: 'EUR', tags: ['Beispiel', 'Immobilien'] },
@@ -169,13 +170,17 @@ async function buildDemo() {
 
   // Verträge: einer aus dem angenommenen Angebot (noch nicht unterschrieben), einer läuft bald aus
   await saveContract(newContract(co(1), {
-    customerId: customers[5].id, title: q2.items[0].name, quoteId: q2.id, status: 'open', billing: 'once',
-    amountCents: q2.totals.netCents, currency: 'USD', taxRate: Number(q2.items[0].taxRate) || 0,
+    customerId: customers[5].id, title: q2.items[0].name, quoteId: q2.id, status: 'open', currency: 'USD',
+    items: itemsFromQuote(q2, (id) => byId('services', id)),
   }));
   await saveContract(newContract(co(0), {
-    customerId: customers[2].id, title: 'SEO-Betreuung', refNumber: 'V-2025-07', status: 'signed', billing: 'monthly',
+    customerId: customers[2].id, title: 'SEO-Betreuung', refNumber: 'V-2025-07', status: 'signed',
     signedDate: addMonths(today, -11), startDate: addDays(addMonths(today, -11), 1), endDate: addDays(today, 25),
-    noticePeriod: '1 Monat zum Laufzeitende', amountCents: services[1].priceCents, currency: 'USD',
+    noticePeriod: '1 Monat zum Laufzeitende', currency: 'USD',
+    items: [
+      newContractItem({ serviceId: services[1].id, name: services[1].name, qty: 1, unit: 'Monat', priceCents: services[1].priceCents, billing: 'monthly' }),
+      newContractItem({ name: 'Einrichtung SEO-Monitoring', qty: 1, unit: 'Pauschal', priceCents: 45000, billing: 'once' }),
+    ],
     notes: 'Beispiel: läuft in Kürze aus – Verlängerung ansprechen.',
   }));
 

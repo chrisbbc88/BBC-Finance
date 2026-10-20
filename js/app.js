@@ -31,6 +31,7 @@ import { AuditView } from './views/audit.js';
 import { AppointmentsView, AppointmentDocHost, followUpAppointments } from './views/appointments.js';
 import { TodosView, dueTodoCount } from './views/todos.js';
 import { ContractsView } from './views/contracts.js';
+import { contractItems, contractSummaryText, lineNet } from './lib/contractitems.js';
 
 const NAV = [
   [{ path: '/', label: 'Dashboard', icon: 'dashboard', exact: true }],
@@ -131,8 +132,8 @@ function searchAll(q) {
       sub: money(i.totals ? i.totals.totalCents : 0, i.currency), href: i.status === 'draft' ? `/quotes/${i.id}/edit` : `/quotes/${i.id}`,
     })));
   add('Verträge', state.contracts
-    .filter((c) => matches(q, c.title, c.refNumber, custName(c), c.notes) || amountHit(q, c.amountCents))
-    .map((c) => ({ key: c.id, label: `${c.title}, ${custName(c) || 'ohne Kontakt'}`, sub: [c.refNumber, c.amountCents != null ? money(c.amountCents, c.currency) : ''].filter(Boolean).join(', '), href: `/contracts?open=${c.id}` })));
+    .filter((c) => matches(q, c.title, c.refNumber, custName(c), c.notes, contractItems(c).map((it) => it.name).join(' ')) || contractItems(c).some((it) => amountHit(q, lineNet(it))))
+    .map((c) => ({ key: c.id, label: `${c.title}, ${custName(c) || 'ohne Kontakt'}`, sub: [c.refNumber, contractSummaryText(c, (x) => money(x, c.currency))].filter(Boolean).join(', '), href: `/contracts?open=${c.id}` })));
   add('Termine', state.appointments
     .filter((a) => matches(q, a.title, a.contactName, custName(a), a.agenda, a.outcome))
     .sort((a, b) => (`${a.date}${a.start}` < `${b.date}${b.start}` ? 1 : -1))

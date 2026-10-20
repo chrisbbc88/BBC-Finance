@@ -87,7 +87,6 @@ test('Bezeichnung von Angeboten und Vorgaben neuer Datensätze', () => {
   assert.equal(uq.number, null);
   assert.equal(uq.status, 'open');
   const k = newContract(company);
-  assert.equal(k.taxRate, 19);
-  assert.equal(k.billing, 'none');
-  assert.equal(k.amountCents, null);
+  assert.deepEqual(k.items, []);
+  assert.equal(k.currency, 'USD');
 });
