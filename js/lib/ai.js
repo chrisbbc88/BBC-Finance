@@ -115,7 +115,7 @@ export function parseResponse(json, { categories, paymentMethods }) {
   };
 }
 
-function httpError(status, body) {
+export function httpError(status, body) {
   const detail = body && body.error && body.error.message ? ` (${body.error.message})` : '';
   if (status === 401) return 'Der API-Key wurde abgelehnt. Bitte in den Einstellungen prüfen.';
   if (status === 403) return `Der API-Key darf diese Anfrage nicht ausführen${detail}.`;

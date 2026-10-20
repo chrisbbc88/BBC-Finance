@@ -9,9 +9,9 @@ import { uid, nowISO, todayISO } from './util.js';
 export const SCHEMA_VERSION = 4;
 export const DB_NAME = 'bbc-finance';
 /** Stand der Anwendung – nach einem Update meldet das Tool einmal, dass alle Daten übernommen wurden. */
-export const APP_VERSION = '2026-10-20';
+export const APP_VERSION = '2026-10-20.2';
 /** Kurzer Hinweis auf die Neuerungen dieser Fassung (erscheint einmal nach dem Update). */
-export const APP_NEWS = 'Neu: Verträge mit mehreren Positionen – einmalig oder laufend (monatlich, quartalsweise, jährlich). Daraus die einmalige Rechnung und die wiederkehrende Rechnung getrennt anlegen.';
+export const APP_NEWS = 'Neu: Belegsprache wechseln übersetzt Positionen und Texte automatisch (mit API-Key) – in Rechnungen, Angeboten, Vorlagen und Verträgen. Dazu Verträge mit einmaligen und laufenden Positionen.';
 
 /** Sammlungen, die vollständig im Arbeitsspeicher gehalten werden. */
 export const COLLECTIONS = [

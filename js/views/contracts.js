@@ -26,6 +26,7 @@ import { pipelineOf, contractStatus } from '../lib/pipeline.js';
 import { CompanyTag, InvoiceBadge, DocAmount, scopeCompanyId } from './shared.js';
 import { RecurringModal } from './recurring.js';
 import { ReceiptView } from './expenses.js';
+import { useTranslation, TranslateButtons } from './translate-ui.js';
 
 /* ---------- Hilfen ---------- */
 
@@ -382,6 +383,7 @@ export function ContractModal({ contract, onClose }) {
   const [busy, setBusy] = useState('');
   const [recurring, setRecurring] = useState(null);
   const set = (k) => (v) => setC((p) => ({ ...p, [k]: v }));
+  const tr = useTranslation({ items: c.items || [] }, (fn) => setC((p) => ({ ...p, items: fn({ items: p.items || [] }).items })));
 
   if (recurring) return html`<${RecurringModal} rec=${recurring} onClose=${onClose} />`;
 
@@ -472,7 +474,8 @@ export function ContractModal({ contract, onClose }) {
       <${SelectField} class="span-2" label="Währung" value=${c.currency} onChange=${set('currency')} options=${DOC_CURRENCIES} />
       <${TextArea} class="span-6" label="Notizen" value=${c.notes} onInput=${set('notes')} rows=${2} placeholder="z. B. Sonderkonditionen, Ansprechpartner, Verlängerung" />
     </div>
-    <h3 class="sub-head">Positionen</h3>
+    <div class="sub-head-row"><h3 class="sub-head">Positionen</h3><${TranslateButtons} tr=${tr} base=${{ items: c.items || [] }} /></div>
+    ${tr.notice}
     <${ContractItemsEditor} items=${c.items || []} onChange=${(items) => setC((p) => ({ ...p, items }))} companyId=${c.companyId} currency=${c.currency} />
     ${c.status !== 'declined' && (sums.hasOnce || sums.intervalIds.length > 0) && html`<h3 class="sub-head">Abrechnen</h3>
       <${ContractBillingBox} c=${c} sums=${sums} billing=${billingInfo} busy=${busy} onOnce=${toInvoice} onInterval=${toRecurring} onClose=${onClose} />`}

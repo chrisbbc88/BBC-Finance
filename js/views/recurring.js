@@ -13,6 +13,7 @@ import { money, date } from '../lib/format.js';
 import { todayISO, clone } from '../lib/util.js';
 import { ItemsEditor } from './doc-editor.js';
 import { CompanyTag } from './shared.js';
+import { useTranslation } from './translate-ui.js';
 
 export function intervalLabel(rec) {
   const def = INTERVALS.find((i) => i.id === rec.interval);
@@ -28,6 +29,12 @@ export function RecurringModal({ rec, onClose }) {
   const [r, setR] = useState(() => clone(rec));
   const [busy, setBusy] = useState(false);
   const set = (k) => (v) => setR((p) => ({ ...p, [k]: v }));
+  const tr = useTranslation(r, setR);
+  function pickLanguage(lang) {
+    const prev = r;
+    setR((p) => ({ ...p, language: lang }));
+    if (lang !== prev.language && tr.hasKey) tr.translate(lang, prev, { setLanguage: true });
+  }
   const company = byId('companies', r.companyId);
   const totals = computeTotals(r);
   const customers = state.customers
@@ -73,13 +80,15 @@ export function RecurringModal({ rec, onClose }) {
       <${DateField} class="span-2" label="Endet am (optional)" value=${r.endDate} onInput=${set('endDate')} min=${r.nextDate} />
       <${NumberField} class="span-2" label="Zahlungsziel" value=${r.paymentTermDays} digits=${0} min=${0} max=${365} suffix="Tage" onChange=${set('paymentTermDays')} />
       <${SelectField} class="span-2" label="Währung" value=${r.currency} onChange=${set('currency')} options=${DOC_CURRENCIES} />
-      <${SelectField} class="span-2" label="Belegsprache" value=${r.language} onChange=${set('language')} options=${LANGUAGES} />
+      <${SelectField} class="span-2" label="Belegsprache" value=${r.language} onChange=${pickLanguage} options=${LANGUAGES}
+        disabled=${tr.busy} hint=${tr.busy ? 'Wird übersetzt …' : (tr.hasKey ? 'Wechsel übersetzt Positionen und Texte' : '')} />
       <div class="span-6">
         <${Checkbox} label="Leistungszeitraum auf die Rechnung schreiben" checked=${r.servicePeriod === 'month'}
           onChange=${(v) => set('servicePeriod')(v ? 'month' : 'none')}
           hint="Vom Rechnungsdatum bis zum Tag vor der nächsten Rechnung" />
       </div>
     </div>
+    ${tr.notice}
     <h3 class="sub-head">Positionen</h3>
     <${ItemsEditor} doc=${r} company=${company} onChange=${(items) => setR((p) => ({ ...p, items }))}
       onNewService=${() => toast('Neue Leistungen legst du unter „Leistungen“ an.', 'info')} />

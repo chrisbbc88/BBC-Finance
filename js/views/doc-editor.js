@@ -26,6 +26,7 @@ import { money, date, dateTime, rate, pct } from '../lib/format.js';
 import { clone, todayISO, nowISO, addDays, isISODate } from '../lib/util.js';
 import { CustomerFormModal } from './customers.js';
 import { invoiceItemsFromContract } from '../lib/contractitems.js';
+import { translateTexts, docTexts, applyTexts } from '../lib/translate.js';
 import { ServiceFormModal } from './services.js';
 
 const KIND = {
@@ -215,6 +216,38 @@ export function DocEditorView({ coll, id, params }) {
 
   const setDoc = (fn) => { setDocRaw(fn); setDirty(true); };
   const set = (k) => (v) => setDoc((d) => ({ ...d, [k]: v }));
+  const [translated, setTranslated] = useState(null);   // { lang, count, before } – für „Rückgängig“
+
+  /** Belegsprache wechseln; mit API-Key werden Positionen und Texte gleich mit übersetzt. */
+  async function pickLanguage(lang) {
+    const prev = doc;
+    setDoc((d) => ({ ...d, language: lang }));
+    if (lang === prev.language) return;
+    if (!state.settings.aiApiKey) { setTranslated({ lang, noKey: true }); return; }
+    await translateTo(lang, prev);
+  }
+  async function translateTo(lang, base = doc) {
+    const texts = docTexts(base);
+    if (!texts.length) { setTranslated(null); return; }
+    setBusy('translate');
+    const res = await attempt(() => translateTexts({ apiKey: state.settings.aiApiKey, model: state.settings.aiModel, texts, target: lang }));
+    setBusy('');
+    if (!res) return;
+    // Nur übernehmen, was der Nutzer in der Zwischenzeit nicht selbst geändert hat.
+    const original = Object.fromEntries(texts.map((t) => [t.id, t.text]));
+    setDoc((d) => {
+      const current = Object.fromEntries(docTexts(d).map((t) => [t.id, t.text]));
+      const safe = Object.fromEntries(Object.entries(res.map).filter(([id]) => current[id] === original[id]));
+      return { ...applyTexts(d, safe), language: lang };
+    });
+    setTranslated({ lang, count: res.count, before: base });
+  }
+  function undoTranslation() {
+    if (!translated || !translated.before) return;
+    const before = translated.before;
+    setDoc((d) => ({ ...applyTexts(d, Object.fromEntries(docTexts(before).map((t) => [t.id, t.text]))), language: before.language }));
+    setTranslated(null);
+  }
 
   useEffect(() => {
     if (dirty) setNavGuard(confirmLeave); else clearNavGuard();
@@ -477,8 +510,18 @@ export function DocEditorView({ coll, id, params }) {
             `}
             ${coll === 'quotes' && html`<${DateField} class="span-2" label="Gültig bis" value=${doc.validUntil} onInput=${set('validUntil')} min=${doc.issueDate} />`}
             <${SelectField} class="span-2" label="Währung" value=${doc.currency} onChange=${pickCurrency} options=${DOC_CURRENCIES} />
-            <${SelectField} class="span-2" label="Belegsprache" value=${doc.language} onChange=${set('language')} options=${LANGUAGES} />
+            <${SelectField} class="span-2" label="Belegsprache" value=${doc.language} onChange=${pickLanguage} options=${LANGUAGES}
+              disabled=${busy === 'translate'} hint=${busy === 'translate' ? 'Wird übersetzt …' : ''} />
           </div>
+          ${translated && translated.noKey && html`<${Notice} tone="info">Positionen und Texte bleiben, wie sie sind. Mit dem API-Key aus den Einstellungen übersetzt das Tool sie beim Sprachwechsel automatisch.<//>`}
+          ${translated && !translated.noKey && html`<${Notice} tone="good" action=${html`<${Button} small onClick=${undoTranslation}>Rückgängig<//>`}>
+            ${translated.count
+              ? `${translated.count} ${translated.count === 1 ? 'Text' : 'Texte'} ins ${translated.lang === 'en' ? 'Englische' : 'Deutsche'} übersetzt – bitte kurz prüfen.`
+              : `Alle Texte waren schon ${translated.lang === 'en' ? 'Englisch' : 'Deutsch'}.`}<//>`}
+          ${state.settings.aiApiKey && docTexts(doc).length > 0 && html`<div class="translate-row">
+            <button type="button" class="link-btn" disabled=${busy === 'translate'} onClick=${() => translateTo(doc.language)}>
+              ${busy === 'translate' ? 'Wird übersetzt …' : `Alle Texte ins ${doc.language === 'en' ? 'Englische' : 'Deutsche'} übersetzen`}</button>
+          </div>`}
         <//>
 
         <${Panel} title="Positionen">
